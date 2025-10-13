@@ -1,21 +1,29 @@
-# Streamlit + Python
+# --- Python ---
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
 .env
-.venv
 venv/
-.envrc
-*.sqlite3
+.env/
+.venv/
 
-# Streamlit Secrets (keep private)
-.streamlit/secrets.toml
+# --- Streamlit ---
+.streamlit/
 
-# Local data
-cartolas/
-procesados.txt
+# --- macOS ---
+.DS_Store
 
-# VS Code + Devcontainer
+# --- VSCode / IDEs ---
 .vscode/
-.devcontainer/
+.idea/
+
+# --- Local data ---
+cartolas_bci.db
+procesados.txt
+*.csv
+*.log
+
+# --- PDFs or user data ---
+cartolas/
+*.pdf
