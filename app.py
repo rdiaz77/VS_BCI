@@ -96,6 +96,12 @@ def init_db(db_path):
             ARCHIVO_ORIGEN TEXT
         )
     """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS archivos_procesados (
+            nombre TEXT PRIMARY KEY,
+            fecha_procesado TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
     conn.commit()
     return conn
 
@@ -127,6 +133,21 @@ def leer_todo_db(conn):
     )
 
 
+def archivo_ya_procesado(conn, filename):
+    """Verifica si un archivo ya fue procesado."""
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT 1 FROM archivos_procesados WHERE nombre = ?", (filename,))
+    return cur.fetchone() is not None
+
+
+def registrar_archivo_procesado(conn, filename):
+    """Agrega el archivo a la lista de procesados."""
+    conn.execute(
+        "INSERT OR IGNORE INTO archivos_procesados (nombre) VALUES (?)", (filename,))
+    conn.commit()
+
+
 # === INICIAR DB ===
 conn = init_db(db_path)
 
@@ -141,6 +162,11 @@ if uploaded_files:
     all_data = []
     st.info(f"Procesando {len(uploaded_files)} archivo(s)...")
     for uploaded_file in uploaded_files:
+        if archivo_ya_procesado(conn, uploaded_file.name):
+            st.warning(
+                f"⚠️ El archivo {uploaded_file.name} ya fue procesado anteriormente. Se omitirá.")
+            continue
+
         pdf_bytes = BytesIO(uploaded_file.read())
         rows = leer_cartola(pdf_bytes, uploaded_file.name)
         if not rows:
@@ -148,6 +174,7 @@ if uploaded_files:
                 f"⚠️ No se encontraron transacciones en {uploaded_file.name}")
             continue
         insertar_en_db(conn, rows)
+        registrar_archivo_procesado(conn, uploaded_file.name)
         all_data.extend(rows)
         st.success(
             f"✅ {len(rows)} transacciones extraídas y guardadas desde {uploaded_file.name}")
@@ -173,17 +200,22 @@ elif base_path and st.button("▶️ Procesar cartolas locales"):
             for root, _, files in os.walk(base_path):
                 for fname in files:
                     if fname.lower().endswith(".pdf"):
+                        if archivo_ya_procesado(conn, fname):
+                            st.warning(
+                                f"⚠️ El archivo {fname} ya fue procesado anteriormente. Se omitirá.")
+                            continue
                         full_path = os.path.join(root, fname)
                         with open(full_path, "rb") as f:
                             rows = leer_cartola(f, fname)
                             if rows:
                                 insertar_en_db(conn, rows)
+                                registrar_archivo_procesado(conn, fname)
                                 all_data.extend(rows)
         if not all_data:
-            st.warning("⚠️ No se encontraron transacciones.")
+            st.warning("⚠️ No se encontraron transacciones nuevas.")
         else:
             st.success(
-                f"✅ {len(all_data)} transacciones encontradas y guardadas en la base de datos.")
+                f"✅ {len(all_data)} nuevas transacciones guardadas en la base de datos.")
             df = pd.DataFrame(all_data)
             st.dataframe(df, use_container_width=True)
 
@@ -217,6 +249,23 @@ if not df_db.empty:
     )
 else:
     st.info("No hay transacciones almacenadas aún en la base de datos.")
+
+# === 🔁 RESET DATABASE BUTTON ===
+st.markdown("---")
+st.subheader("⚙️ Administración de la base de datos")
+
+with st.expander("🧹 Borrar todo el historial de transacciones"):
+    st.warning("Esta acción eliminará *todas las transacciones y registros de archivos procesados* de la base de datos (no se eliminará el archivo DB).")
+    confirm = st.checkbox("Confirmo que deseo borrar todo el historial")
+    if st.button("🗑️ Resetear base de datos"):
+        if confirm:
+            conn.execute("DELETE FROM transacciones")
+            conn.execute("DELETE FROM archivos_procesados")
+            conn.commit()
+            st.success(
+                "✅ Base de datos vaciada correctamente. Recarga la página para actualizar la vista.")
+        else:
+            st.info("☑️ Marca la casilla de confirmación antes de resetear.")
 
 conn.close()
 # === END OF FILE ===
