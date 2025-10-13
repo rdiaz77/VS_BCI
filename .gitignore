@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.DS_Store
+.env
+
+# Streamlit
+.streamlit/
+
+# Cartolas
+*.pdf
+*.csv
+procesados.txt
+
+# Virtual environment
+venv/
