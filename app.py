@@ -12,9 +12,14 @@ st.set_page_config(page_title="Cartolas BCI Extractor", layout="wide")
 # === 🔐 PASSWORD PROTECTION ===
 st.title("🔒 Cartolas BCI Extractor - Login")
 
-APP_PASSWORD = st.secrets["general"]["app_password"]
+# --- Safe secret loading ---
+try:
+    APP_PASSWORD = st.secrets["general"]["app_password"]
+except Exception:
+    st.error("⚠️ No se encontró la contraseña en los secretos de Streamlit Cloud.")
+    st.stop()
 
-# Use session state to persist login
+# --- Persistent session authentication ---
 if "authenticated" not in st.session_state:
     st.session_state["authenticated"] = False
 
@@ -32,12 +37,15 @@ if not st.session_state["authenticated"]:
 st.title("📊 Cartolas BCI Extractor")
 st.write("Analiza tus cartolas de tarjeta de crédito BCI, sube PDFs o usa la carpeta local para generar un CSV agrupado.")
 
-# === CONFIGURACIÓN DE RUTA LOCAL ===
+# === CONFIGURACIÓN DE RUTA LOCAL (RELATIVA Y SEGURA) ===
+# Default to a relative folder so it works both locally and in Streamlit Cloud
 base_path = st.text_input(
-    "📂 Ruta base local de las cartolas",
-    "/users/rafaeldiaz/desktop/python_kame_erp/vs_bci/cartolas"
+    "📂 Ruta base local de las cartolas (opcional para uso local)",
+    "cartolas"  # safe default
 )
-log_path = os.path.join(base_path, "procesados.txt")
+
+# Use a local log file instead of absolute paths (Streamlit Cloud safe)
+log_path = "procesados.txt"
 
 # === REGEX PARA TRANSACCIONES ===
 line_pattern = re.compile(
@@ -48,8 +56,6 @@ line_pattern = re.compile(
 )
 
 # === FUNCIONES AUXILIARES ===
-
-
 def normalizar_monto(valor_str):
     valor_str = valor_str.replace(".", "").replace("$", "").strip()
     try:
@@ -80,8 +86,7 @@ def leer_cartola(file_like, filename="archivo.pdf"):
                     match = line_pattern.search(line)
                     if match:
                         fecha = match.group("fecha")
-                        descripcion = re.sub(
-                            r'\s{2,}', ' ', match.group("desc").strip())
+                        descripcion = re.sub(r'\s{2,}', ' ', match.group("desc").strip())
                         monto_op_int = normalizar_monto(match.group(3))
                         monto_total_int = normalizar_monto(match.group(4))
                         rows.append({
@@ -96,23 +101,6 @@ def leer_cartola(file_like, filename="archivo.pdf"):
     return rows
 
 
-def escribir_csv(csv_path, rows):
-    headers = [
-        "FECHA OPERACIÓN",
-        "DESCRIPCIÓN OPERACIÓN O COBRO",
-        "MONTO OPERACIÓN O COBRO",
-        "MONTO TOTAL A PAGAR",
-        "ARCHIVO ORIGEN"
-    ]
-    file_exists = os.path.exists(csv_path)
-    with open(csv_path, "a", encoding="utf-8", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=headers, quoting=csv.QUOTE_ALL)
-        if not file_exists:
-            writer.writeheader()
-        for row in rows:
-            writer.writerow(row)
-
-
 def procesar_dataframe(df):
     """Limpia y agrega resumen de datos."""
     df["MONTO_TOTAL_INT"] = (
@@ -120,8 +108,7 @@ def procesar_dataframe(df):
         .replace("[\$,]", "", regex=True)
         .astype(float)
     )
-    df["FECHA OPERACIÓN"] = pd.to_datetime(
-        df["FECHA OPERACIÓN"], format="%d/%m/%y", errors="coerce")
+    df["FECHA OPERACIÓN"] = pd.to_datetime(df["FECHA OPERACIÓN"], format="%d/%m/%y", errors="coerce")
     df.drop_duplicates(inplace=True)
 
     total = df["MONTO_TOTAL_INT"].sum()
@@ -144,21 +131,17 @@ if uploaded_files:
         pdf_bytes = BytesIO(uploaded_file.read())
         rows = leer_cartola(pdf_bytes, uploaded_file.name)
         if not rows:
-            st.warning(
-                f"⚠️ No se encontraron transacciones en {uploaded_file.name}")
+            st.warning(f"⚠️ No se encontraron transacciones en {uploaded_file.name}")
             continue
         all_data.extend(rows)
-        st.success(
-            f"✅ {len(rows)} transacciones extraídas de {uploaded_file.name}")
+        st.success(f"✅ {len(rows)} transacciones extraídas de {uploaded_file.name}")
 
     if all_data:
         df = pd.DataFrame(all_data)
         df = procesar_dataframe(df)
-        st.dataframe(
-            df.drop(columns=["MONTO_TOTAL_INT"]), use_container_width=True)
+        st.dataframe(df.drop(columns=["MONTO_TOTAL_INT"]), use_container_width=True)
 
-        csv_output = df.drop(columns=["MONTO_TOTAL_INT"]).to_csv(
-            index=False).encode("utf-8")
+        csv_output = df.drop(columns=["MONTO_TOTAL_INT"]).to_csv(index=False).encode("utf-8")
         st.download_button(
             label="💾 Descargar CSV generado",
             data=csv_output,
@@ -167,12 +150,11 @@ if uploaded_files:
         )
 
 else:
-    st.write(
-        "O usa el siguiente botón para procesar las cartolas desde tu carpeta local:")
+    st.write("O usa el siguiente botón para procesar las cartolas desde tu carpeta local (modo offline):")
 
     if st.button("▶️ Procesar cartolas locales"):
         if not os.path.exists(base_path):
-            st.error("❌ La ruta ingresada no existe.")
+            st.error("❌ La ruta ingresada no existe o no está disponible en la nube.")
         else:
             all_data = []
             processed_files = set()
@@ -196,19 +178,16 @@ else:
             if not all_data:
                 st.warning("⚠️ No se encontraron transacciones nuevas.")
             else:
-                st.success(
-                    f"✅ {len(all_data)} transacciones encontradas en PDFs locales.")
+                st.success(f"✅ {len(all_data)} transacciones encontradas en PDFs locales.")
                 df = pd.DataFrame(all_data)
                 df = procesar_dataframe(df)
-                st.dataframe(
-                    df.drop(columns=["MONTO_TOTAL_INT"]), use_container_width=True)
+                st.dataframe(df.drop(columns=["MONTO_TOTAL_INT"]), use_container_width=True)
 
-                csv_output = df.drop(columns=["MONTO_TOTAL_INT"]).to_csv(
-                    index=False).encode("utf-8")
+                csv_output = df.drop(columns=["MONTO_TOTAL_INT"]).to_csv(index=False).encode("utf-8")
                 st.download_button(
                     label="💾 Descargar CSV generado",
                     data=csv_output,
                     file_name="cartolas_bci_locales.csv",
                     mime="text/csv"
                 )
-# === NOTA FINAL ===
+# === FIN DE LA APLICACIÓN ===

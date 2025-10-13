@@ -1,20 +1,21 @@
-# Python
+# Streamlit + Python
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
-*.DS_Store
 .env
+.venv
+venv/
+.envrc
+*.sqlite3
 
-# Streamlit
-.streamlit/
+# Streamlit Secrets (keep private)
+.streamlit/secrets.toml
 
-# Cartolas
-*.pdf
-*.csv
+# Local data
+cartolas/
 procesados.txt
 
-# Virtual environment
-venv/
-*.db
-
+# VS Code + Devcontainer
+.vscode/
+.devcontainer/
