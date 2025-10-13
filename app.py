@@ -12,13 +12,14 @@ from io import BytesIO
 st.set_page_config(page_title="Cartolas BCI Extractor", layout="wide")
 
 # === APP TITLE ===
-st.title("📊 Cartolas BCI Extractor con Base de Datos (SQLite + Hash)")
+st.title("📊 Cartolas BCI Extractor con Base de Datos (SQLite + Persistencia + Hash)")
 st.write(
     "Analiza tus cartolas de tarjeta de crédito BCI. "
-    "Los datos extraídos se guardan en una base de datos local (SQLite) y se evita procesar el mismo archivo dos veces, incluso si fue renombrado."
+    "Los datos extraídos se guardan en una base de datos local (SQLite) y se evita procesar el mismo archivo dos veces, incluso si fue renombrado. "
+    "En Streamlit Cloud, la base de datos se guarda de forma persistente entre reinicios."
 )
 
-# === CONFIGURACIÓN LOCAL ===
+# === CONFIGURACIÓN LOCAL Y PERSISTENTE ===
 if os.path.exists("/Users"):
     base_path = st.text_input(
         "📂 Ruta base local de las cartolas",
@@ -27,7 +28,13 @@ if os.path.exists("/Users"):
 else:
     base_path = None
 
-db_path = os.path.join(base_path or ".", "cartolas_bci.db")
+# Detecta si está en entorno persistente de Streamlit Cloud
+if os.path.exists("/mount"):
+    persistent_dir = "/mount"  # 🔒 Streamlit Cloud persistent storage
+else:
+    persistent_dir = base_path or "."
+
+db_path = os.path.join(persistent_dir, "cartolas_bci.db")
 
 # === REGEX ORIGINAL (funcional) ===
 line_pattern = re.compile(
@@ -169,7 +176,7 @@ def registrar_archivo_procesado(conn, filename, hash_val):
 
 # === INICIAR DB ===
 conn = init_db(db_path)
-ensure_hash_column(conn)  # <-- 🔒 Safe migration added here
+ensure_hash_column(conn)  # 🔒 Safe migration for existing DBs
 
 
 # === SUBIR O PROCESAR PDF ===
@@ -301,3 +308,4 @@ with st.expander("🧹 Borrar todo el historial de transacciones"):
 
 conn.close()
 # === END OF FILE ===
+# === REQUIREMENTS ===
