@@ -5,16 +5,17 @@ import pdfplumber
 import pandas as pd
 import streamlit as st
 import sqlite3
+import hashlib
 from io import BytesIO
 
 # === PAGE CONFIGURATION ===
 st.set_page_config(page_title="Cartolas BCI Extractor", layout="wide")
 
 # === APP TITLE ===
-st.title("📊 Cartolas BCI Extractor con Base de Datos (SQLite)")
+st.title("📊 Cartolas BCI Extractor con Base de Datos (SQLite + Hash)")
 st.write(
     "Analiza tus cartolas de tarjeta de crédito BCI. "
-    "Los datos extraídos se guardan en una base de datos local (SQLite) para conservar el historial."
+    "Los datos extraídos se guardan en una base de datos local (SQLite) y se evita procesar el mismo archivo mas de una vez, incluso si fue renombrado."
 )
 
 # === CONFIGURACIÓN LOCAL ===
@@ -51,6 +52,13 @@ def formatear_miles(valor_int):
     if valor_int is None:
         return ""
     return f"${valor_int:,}"
+
+# === HASH UTILS ===
+
+
+def calcular_hash(pdf_bytes):
+    """Calcula un hash MD5 del contenido del archivo PDF."""
+    return hashlib.md5(pdf_bytes.getvalue()).hexdigest()
 
 # === LECTURA DE CARTOLA ===
 
@@ -98,7 +106,8 @@ def init_db(db_path):
     """)
     conn.execute("""
         CREATE TABLE IF NOT EXISTS archivos_procesados (
-            nombre TEXT PRIMARY KEY,
+            nombre TEXT,
+            hash TEXT UNIQUE,
             fecha_procesado TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
@@ -133,18 +142,19 @@ def leer_todo_db(conn):
     )
 
 
-def archivo_ya_procesado(conn, filename):
-    """Verifica si un archivo ya fue procesado."""
+def hash_ya_procesado(conn, hash_val):
+    """Verifica si el hash de un archivo ya fue procesado."""
     cur = conn.cursor()
-    cur.execute(
-        "SELECT 1 FROM archivos_procesados WHERE nombre = ?", (filename,))
+    cur.execute("SELECT 1 FROM archivos_procesados WHERE hash = ?", (hash_val,))
     return cur.fetchone() is not None
 
 
-def registrar_archivo_procesado(conn, filename):
-    """Agrega el archivo a la lista de procesados."""
+def registrar_archivo_procesado(conn, filename, hash_val):
+    """Agrega el archivo (nombre + hash) a la lista de procesados."""
     conn.execute(
-        "INSERT OR IGNORE INTO archivos_procesados (nombre) VALUES (?)", (filename,))
+        "INSERT OR IGNORE INTO archivos_procesados (nombre, hash) VALUES (?, ?)",
+        (filename, hash_val),
+    )
     conn.commit()
 
 
@@ -162,19 +172,21 @@ if uploaded_files:
     all_data = []
     st.info(f"Procesando {len(uploaded_files)} archivo(s)...")
     for uploaded_file in uploaded_files:
-        if archivo_ya_procesado(conn, uploaded_file.name):
+        pdf_bytes = BytesIO(uploaded_file.read())
+        hash_val = calcular_hash(pdf_bytes)
+
+        if hash_ya_procesado(conn, hash_val):
             st.warning(
-                f"⚠️ El archivo {uploaded_file.name} ya fue procesado anteriormente. Se omitirá.")
+                f"⚠️ El archivo {uploaded_file.name} (hash coincidente) ya fue procesado anteriormente. Se omitirá.")
             continue
 
-        pdf_bytes = BytesIO(uploaded_file.read())
         rows = leer_cartola(pdf_bytes, uploaded_file.name)
         if not rows:
             st.warning(
                 f"⚠️ No se encontraron transacciones en {uploaded_file.name}")
             continue
         insertar_en_db(conn, rows)
-        registrar_archivo_procesado(conn, uploaded_file.name)
+        registrar_archivo_procesado(conn, uploaded_file.name, hash_val)
         all_data.extend(rows)
         st.success(
             f"✅ {len(rows)} transacciones extraídas y guardadas desde {uploaded_file.name}")
@@ -200,17 +212,23 @@ elif base_path and st.button("▶️ Procesar cartolas locales"):
             for root, _, files in os.walk(base_path):
                 for fname in files:
                     if fname.lower().endswith(".pdf"):
-                        if archivo_ya_procesado(conn, fname):
-                            st.warning(
-                                f"⚠️ El archivo {fname} ya fue procesado anteriormente. Se omitirá.")
-                            continue
                         full_path = os.path.join(root, fname)
                         with open(full_path, "rb") as f:
-                            rows = leer_cartola(f, fname)
+                            pdf_bytes = BytesIO(f.read())
+                            hash_val = calcular_hash(pdf_bytes)
+
+                            if hash_ya_procesado(conn, hash_val):
+                                st.warning(
+                                    f"⚠️ El archivo {fname} (hash coincidente) ya fue procesado anteriormente. Se omitirá.")
+                                continue
+
+                            rows = leer_cartola(pdf_bytes, fname)
                             if rows:
                                 insertar_en_db(conn, rows)
-                                registrar_archivo_procesado(conn, fname)
+                                registrar_archivo_procesado(
+                                    conn, fname, hash_val)
                                 all_data.extend(rows)
+
         if not all_data:
             st.warning("⚠️ No se encontraron transacciones nuevas.")
         else:
@@ -255,7 +273,7 @@ st.markdown("---")
 st.subheader("⚙️ Administración de la base de datos")
 
 with st.expander("🧹 Borrar todo el historial de transacciones"):
-    st.warning("Esta acción eliminará *todas las transacciones y registros de archivos procesados* de la base de datos (no se eliminará el archivo DB).")
+    st.warning("Esta acción eliminará *todas las transacciones y registros de archivos procesados (incluidos hashes)* de la base de datos (no se eliminará el archivo DB).")
     confirm = st.checkbox("Confirmo que deseo borrar todo el historial")
     if st.button("🗑️ Resetear base de datos"):
         if confirm:
