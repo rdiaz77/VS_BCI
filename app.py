@@ -15,7 +15,7 @@ st.set_page_config(page_title="Cartolas BCI Extractor", layout="wide")
 st.title("📊 Cartolas BCI Extractor con Base de Datos (SQLite + Hash)")
 st.write(
     "Analiza tus cartolas de tarjeta de crédito BCI. "
-    "Los datos extraídos se guardan en una base de datos local (SQLite) y se evita procesar el mismo archivo mas de una vez, incluso si fue renombrado."
+    "Los datos extraídos se guardan en una base de datos local (SQLite) y se evita procesar el mismo archivo dos veces, incluso si fue renombrado."
 )
 
 # === CONFIGURACIÓN LOCAL ===
@@ -53,16 +53,14 @@ def formatear_miles(valor_int):
         return ""
     return f"${valor_int:,}"
 
+
 # === HASH UTILS ===
-
-
 def calcular_hash(pdf_bytes):
     """Calcula un hash MD5 del contenido del archivo PDF."""
     return hashlib.md5(pdf_bytes.getvalue()).hexdigest()
 
+
 # === LECTURA DE CARTOLA ===
-
-
 def leer_cartola(file_like, filename="archivo.pdf"):
     """Extrae transacciones desde una cartola PDF (subida o local)."""
     rows = []
@@ -89,9 +87,8 @@ def leer_cartola(file_like, filename="archivo.pdf"):
                     })
     return rows
 
+
 # === BASE DE DATOS (SQLite) ===
-
-
 def init_db(db_path):
     conn = sqlite3.connect(db_path)
     conn.execute("""
@@ -113,6 +110,18 @@ def init_db(db_path):
     """)
     conn.commit()
     return conn
+
+
+# === SAFE MIGRATION: Add "hash" column if missing ===
+def ensure_hash_column(conn):
+    cur = conn.cursor()
+    cur.execute("PRAGMA table_info(archivos_procesados)")
+    cols = [r[1] for r in cur.fetchall()]
+    if "hash" not in cols:
+        conn.execute("ALTER TABLE archivos_procesados ADD COLUMN hash TEXT")
+        conn.commit()
+        st.info(
+            "🆕 Se agregó la columna 'hash' a la tabla 'archivos_procesados' (migración automática).")
 
 
 def insertar_en_db(conn, rows):
@@ -160,6 +169,8 @@ def registrar_archivo_procesado(conn, filename, hash_val):
 
 # === INICIAR DB ===
 conn = init_db(db_path)
+ensure_hash_column(conn)  # <-- 🔒 Safe migration added here
+
 
 # === SUBIR O PROCESAR PDF ===
 uploaded_files = st.file_uploader(
@@ -247,6 +258,7 @@ elif base_path and st.button("▶️ Procesar cartolas locales"):
 else:
     st.info("Sube tus archivos PDF para comenzar.")
 
+
 # === DESCARGAR HISTORIAL DE LA BASE DE DATOS ===
 st.subheader("📦 Transacciones almacenadas en base de datos")
 df_db = leer_todo_db(conn)
@@ -268,12 +280,14 @@ if not df_db.empty:
 else:
     st.info("No hay transacciones almacenadas aún en la base de datos.")
 
+
 # === 🔁 RESET DATABASE BUTTON ===
 st.markdown("---")
 st.subheader("⚙️ Administración de la base de datos")
 
 with st.expander("🧹 Borrar todo el historial de transacciones"):
-    st.warning("Esta acción eliminará *todas las transacciones y registros de archivos procesados (incluidos hashes)* de la base de datos (no se eliminará el archivo DB).")
+    st.warning(
+        "Esta acción eliminará *todas las transacciones y registros de archivos procesados (incluidos hashes)* de la base de datos (no se eliminará el archivo DB).")
     confirm = st.checkbox("Confirmo que deseo borrar todo el historial")
     if st.button("🗑️ Resetear base de datos"):
         if confirm:
