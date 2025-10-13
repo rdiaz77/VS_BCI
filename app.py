@@ -5,6 +5,8 @@ import pdfplumber
 import pandas as pd
 import streamlit as st
 from io import BytesIO
+st.write("🚀 App loaded successfully — initializing UI...")
+
 
 # === CONFIGURACIÓN STREAMLIT ===
 st.set_page_config(page_title="Cartolas BCI Extractor", layout="wide")
