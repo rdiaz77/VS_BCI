@@ -1,59 +1,56 @@
 import os
 import re
-import csv
 import pdfplumber
 import pandas as pd
 import streamlit as st
 from io import BytesIO
-st.write("🚀 App loaded successfully — initializing UI...")
-
 
 # === CONFIGURACIÓN STREAMLIT ===
 st.set_page_config(page_title="Cartolas BCI Extractor", layout="wide")
+st.write("🚀 App loaded successfully — initializing UI...")
 
-# === 🔐 PASSWORD PROTECTION ===
+# === 🔐 LOGIN OPCIONAL ===
 st.title("🔒 Cartolas BCI Extractor - Login")
 
-# --- Secure password loading with fallbacks ---
+APP_PASSWORD = None
 password_source = None
+
+# Try to get password from secrets or environment
 try:
-    # Preferred: from Streamlit secrets (cloud or local)
     APP_PASSWORD = st.secrets["general"]["app_password"]
-    password_source = "secrets.toml"
+    password_source = "Streamlit Cloud secrets"
 except Exception:
-    # Fallback: from environment variable or default
-    APP_PASSWORD = os.getenv("APP_PASSWORD", "Isabel4394")
-    password_source = "environment variable" if "APP_PASSWORD" in os.environ else "default"
-    st.warning(
-        f"⚠️ No se encontró 'app_password' en los secretos. Usando {password_source}.")
+    if "APP_PASSWORD" in os.environ:
+        APP_PASSWORD = os.environ["APP_PASSWORD"]
+        password_source = "environment variable"
 
-# --- Persistent session authentication ---
-if "authenticated" not in st.session_state:
-    st.session_state["authenticated"] = False
+if APP_PASSWORD:
+    if "authenticated" not in st.session_state:
+        st.session_state["authenticated"] = False
 
-if not st.session_state["authenticated"]:
-    password = st.text_input("Introduce la contraseña:", type="password")
-    if password == APP_PASSWORD:
-        st.session_state["authenticated"] = True
-        st.success("✅ Acceso concedido. Bienvenido, Rafael.")
-        st.rerun()
-    elif password:
-        st.warning("❌ Contraseña incorrecta.")
-        st.stop()
+    if not st.session_state["authenticated"]:
+        password = st.text_input("Introduce la contraseña:", type="password")
+        if password == APP_PASSWORD:
+            st.session_state["authenticated"] = True
+            st.success("✅ Acceso concedido.")
+            st.rerun()
+        elif password:
+            st.warning("❌ Contraseña incorrecta.")
+            st.stop()
+    else:
+        st.info(f"🔓 Sesión activa (fuente: {password_source}).")
 else:
-    st.info(f"🔓 Sesión activa (fuente de contraseña: {password_source}).")
+    st.warning(
+        "⚠️ No se configuró una contraseña. El acceso está abierto temporalmente.")
 
-# === APP MAIN INTERFACE ===
+# === INTERFAZ PRINCIPAL ===
 st.title("📊 Cartolas BCI Extractor")
 st.write("Analiza tus cartolas de tarjeta de crédito BCI, sube PDFs o usa la carpeta local para generar un CSV agrupado.")
 
-# === CONFIGURACIÓN DE RUTA LOCAL (RELATIVA Y SEGURA) ===
+# === CONFIGURACIÓN DE RUTA LOCAL ===
 base_path = st.text_input(
-    "📂 Ruta base local de las cartolas (opcional para uso local)",
-    "cartolas"  # safe default for cloud and local
-)
-
-log_path = "procesados.txt"  # safe local log file
+    "📂 Ruta base local de las cartolas (opcional para uso local)", "cartolas")
+log_path = "procesados.txt"
 
 # === REGEX PARA TRANSACCIONES ===
 line_pattern = re.compile(
@@ -77,11 +74,11 @@ def normalizar_monto(valor_str):
 def formatear_miles(valor_int):
     if valor_int is None:
         return ""
-    return f"${valor_int:,}"  # U.S. thousands separator
+    return f"${valor_int:,}"
 
 
 def leer_cartola(file_like, filename="archivo.pdf"):
-    """Extrae transacciones desde una cartola PDF (subida o local)."""
+    """Extrae transacciones desde una cartola PDF."""
     rows = []
     try:
         with pdfplumber.open(file_like) as pdf:
@@ -91,7 +88,7 @@ def leer_cartola(file_like, filename="archivo.pdf"):
                     continue
                 for line in text.splitlines():
                     line = line.strip()
-                    if not line or line.startswith(("LUGAR", "OPERACIÓN", "TOTAL", "III.", "II.", "I.")):
+                    if line.startswith(("LUGAR", "OPERACIÓN", "TOTAL", "III.", "II.", "I.")) or not line:
                         continue
                     match = line_pattern.search(line)
                     if match:
@@ -120,15 +117,15 @@ def procesar_dataframe(df):
         .astype(float)
     )
     df["FECHA OPERACIÓN"] = pd.to_datetime(
-        df["FECHA OPERACIÓN"], format="%d/%m/%y", errors="coerce")
+        df["FECHA OPERACIÓN"], format="%d/%m/%y", errors="coerce"
+    )
     df.drop_duplicates(inplace=True)
-
     total = df["MONTO_TOTAL_INT"].sum()
     st.metric("💰 Total monto a pagar", f"${total:,.0f}")
     return df
 
 
-# === SUBIR O PROCESAR PDF ===
+# === SUBIR PDF ===
 uploaded_files = st.file_uploader(
     "📤 Sube tus cartolas en PDF (puedes arrastrarlas aquí):",
     type=["pdf"],
@@ -210,4 +207,5 @@ else:
                     file_name="cartolas_bci_locales.csv",
                     mime="text/csv"
                 )
+
 # === FIN DEL SCRIPT ===
