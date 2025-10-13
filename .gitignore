@@ -16,3 +16,5 @@ procesados.txt
 
 # Virtual environment
 venv/
+*.db
+
