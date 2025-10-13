@@ -6,10 +6,14 @@ import pandas as pd
 import streamlit as st
 import sqlite3
 import hashlib
+import platform
 from io import BytesIO
 
 # === PAGE CONFIGURATION ===
 st.set_page_config(page_title="Cartolas BCI Extractor", layout="wide")
+
+# === STARTUP HEARTBEAT ===
+st.write("🟢 App initializing... (si ves este mensaje, la app se cargó correctamente)")
 
 # === APP TITLE ===
 st.title("📊 Cartolas BCI Extractor con Base de Datos (SQLite + Persistencia + Hash)")
@@ -19,8 +23,13 @@ st.write(
     "En Streamlit Cloud, la base de datos se guarda de forma persistente entre reinicios."
 )
 
-# === CONFIGURACIÓN LOCAL Y PERSISTENTE ===
-if os.path.exists("/Users"):
+# === CONFIGURACIÓN LOCAL (Safe for Streamlit Cloud) ===
+try:
+    is_local_mac = platform.system() == "Darwin" and os.path.exists("/Users")
+except Exception:
+    is_local_mac = False
+
+if is_local_mac:
     base_path = st.text_input(
         "📂 Ruta base local de las cartolas",
         "/Users/rafaeldiaz/Desktop/Python_Kame_ERP/VS_BCI/cartolas",
@@ -308,4 +317,3 @@ with st.expander("🧹 Borrar todo el historial de transacciones"):
 
 conn.close()
 # === END OF FILE ===
-# === REQUIREMENTS ===
