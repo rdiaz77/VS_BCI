@@ -6,6 +6,7 @@ import pandas as pd
 import streamlit as st
 from io import BytesIO
 
+
 # === CONFIGURACIÓN STREAMLIT ===
 st.set_page_config(page_title="Cartolas BCI Extractor", layout="wide")
 
@@ -13,7 +14,7 @@ st.set_page_config(page_title="Cartolas BCI Extractor", layout="wide")
 st.title("🔒 Cartolas BCI Extractor - Login")
 
 # Set your password or environment variable
-APP_PASSWORD = os.getenv("CARTOLAS_APP_PASSWORD", "vitrosecure123")
+APP_PASSWORD = st.secrets["general"]["app_password"]
 
 password = st.text_input("Introduce la contraseña:", type="password")
 
