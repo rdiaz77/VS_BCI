@@ -4,16 +4,17 @@ import csv
 import pdfplumber
 import pandas as pd
 import streamlit as st
+import sqlite3
 from io import BytesIO
 
 # === PAGE CONFIGURATION ===
 st.set_page_config(page_title="Cartolas BCI Extractor", layout="wide")
 
 # === APP TITLE ===
-st.title("📊 Cartolas BCI Extractor")
+st.title("📊 Cartolas BCI Extractor con Base de Datos (SQLite)")
 st.write(
-    "Analiza tus cartolas de tarjeta de crédito BCI, "
-    "sube archivos PDF o usa la carpeta local (solo modo local) para generar un CSV agrupado."
+    "Analiza tus cartolas de tarjeta de crédito BCI. "
+    "Los datos extraídos se guardan en una base de datos local (SQLite) para conservar el historial."
 )
 
 # === CONFIGURACIÓN LOCAL ===
@@ -25,15 +26,18 @@ if os.path.exists("/Users"):
 else:
     base_path = None
 
-log_path = os.path.join(base_path or ".", "procesados.txt")
+db_path = os.path.join(base_path or ".", "cartolas_bci.db")
 
-# === REGEX PARA TRANSACCIONES ===
+# === REGEX ORIGINAL (funcional) ===
 line_pattern = re.compile(
     r"(?P<fecha>\d{2}/\d{2}/\d{2})\s+"
     r"(?:\d{9,}\s+)?"
     r"(?P<desc>.+?)\s+\$\s*(-?\d{1,3}(?:\.\d{3})*)"
     r"\s+\$\s*(-?\d{1,3}(?:\.\d{3})*)"
 )
+
+# === FUNCIONES AUXILIARES ===
+
 
 def normalizar_monto(valor_str):
     valor_str = valor_str.replace(".", "").replace("$", "").strip()
@@ -42,10 +46,14 @@ def normalizar_monto(valor_str):
     except ValueError:
         return None
 
+
 def formatear_miles(valor_int):
     if valor_int is None:
         return ""
     return f"${valor_int:,}"
+
+# === LECTURA DE CARTOLA ===
+
 
 def leer_cartola(file_like, filename="archivo.pdf"):
     """Extrae transacciones desde una cartola PDF (subida o local)."""
@@ -60,33 +68,67 @@ def leer_cartola(file_like, filename="archivo.pdf"):
                 match = line_pattern.search(line)
                 if match:
                     fecha = match.group("fecha")
-                    descripcion = re.sub(r"\s{2,}", " ", match.group("desc").strip())
+                    descripcion = re.sub(
+                        r"\s{2,}", " ", match.group("desc").strip())
                     monto_op_int = normalizar_monto(match.group(3))
                     monto_total_int = normalizar_monto(match.group(4))
                     rows.append({
-                        "FECHA OPERACIÓN": fecha,
-                        "DESCRIPCION OPERACION O COBRO": descripcion,
-                        "MONTO OPERACIÓN O COBRO": formatear_miles(monto_op_int),
-                        "MONTO TOTAL A PAGAR": formatear_miles(monto_total_int),
-                        "ARCHIVO ORIGEN": filename
+                        "FECHA_OPERACION": fecha,
+                        "DESCRIPCION": descripcion,
+                        "MONTO_OPERACION": monto_op_int,
+                        "MONTO_TOTAL": monto_total_int,
+                        "ARCHIVO_ORIGEN": filename
                     })
     return rows
 
-def escribir_csv(csv_path, rows):
-    headers = [
-        "FECHA OPERACIÓN",
-        "DESCRIPCION OPERACION O COBRO",
-        "MONTO OPERACIÓN O COBRO",
-        "MONTO TOTAL A PAGAR",
-        "ARCHIVO ORIGEN"
-    ]
-    file_exists = os.path.exists(csv_path)
-    with open(csv_path, "a", encoding="utf-8", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=headers, quoting=csv.QUOTE_ALL)
-        if not file_exists:
-            writer.writeheader()
-        for row in rows:
-            writer.writerow(row)
+# === BASE DE DATOS (SQLite) ===
+
+
+def init_db(db_path):
+    conn = sqlite3.connect(db_path)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS transacciones (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            FECHA_OPERACION TEXT,
+            DESCRIPCION TEXT,
+            MONTO_OPERACION INTEGER,
+            MONTO_TOTAL INTEGER,
+            ARCHIVO_ORIGEN TEXT
+        )
+    """)
+    conn.commit()
+    return conn
+
+
+def insertar_en_db(conn, rows):
+    """Inserta múltiples transacciones en la base de datos."""
+    conn.executemany("""
+        INSERT INTO transacciones
+        (FECHA_OPERACION, DESCRIPCION, MONTO_OPERACION, MONTO_TOTAL, ARCHIVO_ORIGEN)
+        VALUES (?, ?, ?, ?, ?)
+    """, [
+        (
+            row["FECHA_OPERACION"],
+            row["DESCRIPCION"],
+            row["MONTO_OPERACION"],
+            row["MONTO_TOTAL"],
+            row["ARCHIVO_ORIGEN"]
+        )
+        for row in rows
+    ])
+    conn.commit()
+
+
+def leer_todo_db(conn):
+    """Devuelve todas las transacciones guardadas."""
+    return pd.read_sql_query(
+        "SELECT FECHA_OPERACION, DESCRIPCION, MONTO_OPERACION, MONTO_TOTAL, ARCHIVO_ORIGEN FROM transacciones ORDER BY FECHA_OPERACION",
+        conn
+    )
+
+
+# === INICIAR DB ===
+conn = init_db(db_path)
 
 # === SUBIR O PROCESAR PDF ===
 uploaded_files = st.file_uploader(
@@ -102,10 +144,13 @@ if uploaded_files:
         pdf_bytes = BytesIO(uploaded_file.read())
         rows = leer_cartola(pdf_bytes, uploaded_file.name)
         if not rows:
-            st.warning(f"⚠️ No se encontraron transacciones en {uploaded_file.name}")
+            st.warning(
+                f"⚠️ No se encontraron transacciones en {uploaded_file.name}")
             continue
+        insertar_en_db(conn, rows)
         all_data.extend(rows)
-        st.success(f"✅ {len(rows)} transacciones extraídas de {uploaded_file.name}")
+        st.success(
+            f"✅ {len(rows)} transacciones extraídas y guardadas desde {uploaded_file.name}")
 
     if all_data:
         df = pd.DataFrame(all_data)
@@ -113,7 +158,7 @@ if uploaded_files:
 
         csv_output = df.to_csv(index=False).encode("utf-8")
         st.download_button(
-            label="💾 Descargar CSV generado",
+            label="💾 Descargar CSV generado (sesión actual)",
             data=csv_output,
             file_name="cartolas_bci_extraidas.csv",
             mime="text/csv"
@@ -132,21 +177,46 @@ elif base_path and st.button("▶️ Procesar cartolas locales"):
                         with open(full_path, "rb") as f:
                             rows = leer_cartola(f, fname)
                             if rows:
+                                insertar_en_db(conn, rows)
                                 all_data.extend(rows)
         if not all_data:
             st.warning("⚠️ No se encontraron transacciones.")
         else:
-            st.success(f"✅ {len(all_data)} transacciones encontradas en PDFs locales.")
+            st.success(
+                f"✅ {len(all_data)} transacciones encontradas y guardadas en la base de datos.")
             df = pd.DataFrame(all_data)
             st.dataframe(df, use_container_width=True)
 
             csv_output = df.to_csv(index=False).encode("utf-8")
             st.download_button(
-                label="💾 Descargar CSV generado",
+                label="💾 Descargar CSV generado (sesión actual)",
                 data=csv_output,
                 file_name="cartolas_bci_locales.csv",
                 mime="text/csv"
             )
 else:
     st.info("Sube tus archivos PDF para comenzar.")
+
+# === DESCARGAR HISTORIAL DE LA BASE DE DATOS ===
+st.subheader("📦 Transacciones almacenadas en base de datos")
+df_db = leer_todo_db(conn)
+
+if not df_db.empty:
+    df_view = df_db.copy()
+    for col in ["MONTO_OPERACION", "MONTO_TOTAL"]:
+        df_view[col] = df_view[col].apply(
+            lambda x: f"${x:,}" if pd.notnull(x) else "")
+    st.dataframe(df_view, use_container_width=True)
+
+    csv_data = df_db.to_csv(index=False).encode("utf-8")
+    st.download_button(
+        label="💾 Descargar TODAS las transacciones (historial completo)",
+        data=csv_data,
+        file_name="cartolas_bci_db.csv",
+        mime="text/csv"
+    )
+else:
+    st.info("No hay transacciones almacenadas aún en la base de datos.")
+
+conn.close()
 # === END OF FILE ===
