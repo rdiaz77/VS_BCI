@@ -33,12 +33,14 @@ else:
     base_path = None
 
 # === CONFIGURAR DIRECTORIO PERSISTENTE (CLOUD o LOCAL) ===
-if os.path.exists("/mount"):
-    persistent_dir = "/mount"
+if os.access("/mount/src", os.W_OK):
+    persistent_dir = "/mount/src/vs_bci"  # Writable inside Streamlit Cloud
+elif os.path.exists("/mount") and os.access("/mount", os.W_OK):
+    persistent_dir = "/mount"              # Fallback if /mount is writable
 else:
-    persistent_dir = base_path or "."
+    persistent_dir = base_path or "."      # Local mode on macOS or elsewhere
 
-# Crear el directorio si no existe
+# Ensure directory exists
 os.makedirs(persistent_dir, exist_ok=True)
 
 db_path = os.path.join(persistent_dir, "cartolas_bci.db")
