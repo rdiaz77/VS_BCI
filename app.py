@@ -9,6 +9,44 @@ from io import BytesIO
 import platform
 from dashboard import show_dashboard
 
+# === SIMPLE PASSWORD PROTECTION USING SECRETS ===
+
+def check_password():
+    """Prompt for password and stop app execution until the correct one is entered."""
+
+    def password_entered():
+        """Check the entered password and update session state."""
+        if st.session_state["password"] == st.secrets["app_password"]:
+            st.session_state["password_correct"] = True
+            del st.session_state["password"]  # Remove password from memory
+        else:
+            st.session_state["password_correct"] = False
+
+    # First-time password check
+    if "password_correct" not in st.session_state:
+        st.text_input(
+            "🔐 Ingresa la contraseña para acceder:",
+            type="password",
+            on_change=password_entered,
+            key="password",
+        )
+        st.stop()
+
+    # If password is incorrect
+    elif not st.session_state["password_correct"]:
+        st.text_input(
+            "🔐 Ingresa la contraseña para acceder:",
+            type="password",
+            on_change=password_entered,
+            key="password",
+        )
+        st.error("❌ Contraseña incorrecta")
+        st.stop()
+
+
+# Run password check before loading the rest of the app
+check_password()
+
 
 # === PAGE CONFIGURATION ===
 st.set_page_config(page_title="Cartolas BCI Extractor", layout="wide")

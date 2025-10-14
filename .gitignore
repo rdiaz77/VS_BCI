@@ -27,3 +27,4 @@ procesados.txt
 # --- PDFs or user data ---
 cartolas/
 *.pdf
+.streamlit/secrets.toml
