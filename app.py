@@ -7,6 +7,8 @@ import streamlit as st
 import sqlite3
 from io import BytesIO
 import platform
+from dashboard import show_dashboard
+
 
 # === PAGE CONFIGURATION ===
 st.set_page_config(page_title="Cartolas BCI Extractor", layout="wide")
@@ -260,6 +262,9 @@ if not df_db.empty:
     )
 else:
     st.info("No hay transacciones almacenadas aún en la base de datos.")
+
+show_dashboard(df_db)
+
 
 # === 🔁 RESET DATABASE BUTTON ===
 st.markdown("---")
