@@ -113,7 +113,8 @@ def init_db(db_path):
             DESCRIPCION TEXT,
             MONTO_OPERACION INTEGER,
             MONTO_TOTAL INTEGER,
-            ARCHIVO_ORIGEN TEXT
+            ARCHIVO_ORIGEN TEXT,
+            CONCILIADO INTEGER DEFAULT 0
         )
     """)
     conn.execute("""
@@ -146,7 +147,8 @@ def insertar_en_db(conn, rows):
 
 def leer_todo_db(conn):
     return pd.read_sql_query(
-        "SELECT FECHA_OPERACION, DESCRIPCION, MONTO_OPERACION, MONTO_TOTAL, ARCHIVO_ORIGEN FROM transacciones ORDER BY FECHA_OPERACION",
+        "SELECT FECHA_OPERACION, DESCRIPCION, MONTO_OPERACION, MONTO_TOTAL, ARCHIVO_ORIGEN, CONCILIADO "
+        "FROM transacciones ORDER BY FECHA_OPERACION",
         conn
     )
 
@@ -166,6 +168,14 @@ def registrar_archivo_procesado(conn, filename):
 
 # === INICIAR DB ===
 conn = init_db(db_path)
+
+# Try adding CONCILIADO column if missing
+try:
+    conn.execute(
+        "ALTER TABLE transacciones ADD COLUMN CONCILIADO INTEGER DEFAULT 0;")
+    conn.commit()
+except sqlite3.OperationalError:
+    pass  # Column already exists
 
 # === SUBIR O PROCESAR PDF ===
 uploaded_files = st.file_uploader(
@@ -248,23 +258,49 @@ st.subheader("📦 Transacciones almacenadas en base de datos")
 df_db = leer_todo_db(conn)
 
 if not df_db.empty:
-    df_view = df_db.copy()
-    for col in ["MONTO_OPERACION", "MONTO_TOTAL"]:
-        df_view[col] = df_view[col].apply(
-            lambda x: f"${x:,}" if pd.notnull(x) else "")
-    st.dataframe(df_view, use_container_width=True)
-    csv_data = df_db.to_csv(index=False).encode("utf-8")
-    st.download_button(
-        label="💾 Descargar TODAS las transacciones (historial completo)",
-        data=csv_data,
-        file_name="cartolas_bci_db.csv",
-        mime="text/csv"
-    )
+    tab1, tab2 = st.tabs(["📄 Datos", "📈 Analytics"])
+
+    # --- TAB 1: Datos + Conciliación ---
+    with tab1:
+        df_view = df_db.copy()
+        df_view["CONCILIADO"] = df_view["CONCILIADO"].astype(bool)
+        edited_df = st.data_editor(
+            df_view,
+            use_container_width=True,
+            hide_index=True,
+            key="editable_df",
+            column_config={
+                "CONCILIADO": st.column_config.CheckboxColumn("✅ Conciliado", default=False)
+            },
+        )
+
+        if st.button("💾 Guardar cambios de conciliación"):
+            for _, row in edited_df.iterrows():
+                conn.execute(
+                    """
+                    UPDATE transacciones
+                    SET CONCILIADO = ?
+                    WHERE FECHA_OPERACION = ? AND DESCRIPCION = ? AND MONTO_OPERACION = ?
+                    """,
+                    (1 if row["CONCILIADO"] else 0, row["FECHA_OPERACION"],
+                     row["DESCRIPCION"], row["MONTO_OPERACION"]),
+                )
+            conn.commit()
+            st.success("✅ Cambios de conciliación guardados correctamente.")
+
+        csv_data = df_db.to_csv(index=False).encode("utf-8")
+        st.download_button(
+            label="💾 Descargar TODAS las transacciones (historial completo)",
+            data=csv_data,
+            file_name="cartolas_bci_db.csv",
+            mime="text/csv",
+        )
+
+    # --- TAB 2: Dashboard ---
+    with tab2:
+        show_dashboard(df_db)
 else:
     st.info("No hay transacciones almacenadas aún en la base de datos.")
-
-show_dashboard(df_db)
-
 
 # === 🔁 RESET DATABASE BUTTON ===
 st.markdown("---")
