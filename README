@@ -1,0 +1,19 @@
+# 📊 Cartolas BCI Extractor
+
+A Streamlit web app that extracts and analyzes **BCI credit card statements (cartolas)** from PDF files.
+It stores transactions in a local **SQLite** database, supports **conciliación manual**, and provides an **interactive dashboard** powered by Plotly.
+
+---
+
+## 🚀 Features
+
+- 🧩 PDF extraction with `pdfplumber` and regex
+- 💾 Persistent SQLite database
+- 🔐 Password protection via Streamlit secrets
+- 📊 Interactive dashboard (Plotly + Streamlit)
+- ✅ Conciliación tracking with checkbox editing
+- 🧹 Reset database option for maintenance
+
+---
+
+## 🗂️ Project Structure
