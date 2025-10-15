@@ -4,6 +4,7 @@ import csv
 import pandas as pd
 import streamlit as st
 import platform
+import sqlite3
 from io import BytesIO
 from dashboard import show_dashboard
 
@@ -96,11 +97,8 @@ st.write(f"📁 Base de datos en uso: `{db_path}`")
 conn = init_db(db_path)
 
 # Try adding CONCILIADO column if missing
-import sqlite3
 try:
-    conn.execute(
-        "ALTER TABLE transacciones ADD COLUMN CONCILIADO INTEGER DEFAULT 0;"
-    )
+    conn.execute("ALTER TABLE transacciones ADD COLUMN CONCILIADO INTEGER DEFAULT 0;")
     conn.commit()
 except sqlite3.OperationalError:
     pass  # Column already exists
@@ -188,7 +186,30 @@ else:
 st.subheader("📦 Transacciones almacenadas en base de datos")
 df_db = leer_todo_db(conn)
 
+# --- NUEVO FILTRO POR TITULAR ---
 if not df_db.empty:
+    # Crear columna TITULAR si no existe
+    if "TITULAR" not in df_db.columns:
+        df_db["TITULAR"] = (
+            df_db["ARCHIVO_ORIGEN"]
+            .str.extract(r"BCI_([A-Za-zÁÉÍÓÚÑ_]+)_")
+            .iloc[:, 0]
+            .str.replace("_", " ")
+            .str.title()
+        )
+
+    # Filtro visual
+    titulares = sorted(df_db["TITULAR"].dropna().unique())
+    titular_seleccionado = st.selectbox(
+        "👤 Filtrar por titular",
+        ["Todos"] + titulares,
+        index=0,
+    )
+
+    # Aplicar filtro
+    if titular_seleccionado != "Todos":
+        df_db = df_db[df_db["TITULAR"] == titular_seleccionado]
+
     tab1, tab2 = st.tabs(["📄 Datos", "📈 Analytics"])
 
     # --- TAB 1: Datos + Conciliación ---
@@ -234,6 +255,7 @@ if not df_db.empty:
     # --- TAB 2: Dashboard ---
     with tab2:
         show_dashboard(df_db)
+
 else:
     st.info("No hay transacciones almacenadas aún en la base de datos.")
 

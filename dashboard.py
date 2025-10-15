@@ -13,12 +13,31 @@ def show_dashboard(df_db: pd.DataFrame):
     # --- Preprocesamiento ---
     df = df_db.copy()
     df["FECHA_OPERACION"] = pd.to_datetime(
-        df["FECHA_OPERACION"], format="%d/%m/%y", errors="coerce")
+        df["FECHA_OPERACION"], format="%d/%m/%y", errors="coerce"
+    )
     df = df.dropna(subset=["FECHA_OPERACION"])
     df["MES"] = df["FECHA_OPERACION"].dt.to_period("M").astype(str)
     df["CONCILIADO"] = df.get("CONCILIADO", 0).astype(int)
 
-    # --- Filtros ---
+    # === NUEVO FILTRO POR TITULAR ===
+    if "TITULAR" not in df.columns:
+        df["TITULAR"] = (
+            df["ARCHIVO_ORIGEN"]
+            .str.extract(r"BCI_([A-Za-zÁÉÍÓÚÑ_]+)_")
+            .iloc[:, 0]
+            .str.replace("_", " ")
+            .str.title()
+        )
+
+    titulares = sorted(df["TITULAR"].dropna().unique())
+    titular_seleccionado = st.selectbox(
+        "👤 Selecciona titular (opcional)", ["Todos"] + titulares
+    )
+
+    if titular_seleccionado != "Todos":
+        df = df[df["TITULAR"] == titular_seleccionado]
+
+    # --- Filtros de periodo / búsqueda ---
     col1, col2 = st.columns([1, 2])
     with col1:
         meses = sorted(df["MES"].unique(), reverse=True)
@@ -31,8 +50,9 @@ def show_dashboard(df_db: pd.DataFrame):
     if mes_seleccionado != "Todos":
         df_filtrado = df_filtrado[df_filtrado["MES"] == mes_seleccionado]
     if busqueda:
-        df_filtrado = df_filtrado[df_filtrado["DESCRIPCION"].str.contains(
-            busqueda, case=False, na=False)]
+        df_filtrado = df_filtrado[
+            df_filtrado["DESCRIPCION"].str.contains(busqueda, case=False, na=False)
+        ]
 
     # --- KPIs ---
     total_gasto = df_filtrado["MONTO_OPERACION"].sum()
@@ -45,8 +65,7 @@ def show_dashboard(df_db: pd.DataFrame):
     c1.metric("💰 Gasto total", f"${total_gasto:,.0f}")
     c2.metric("🧾 N° transacciones", f"{num_trans}")
     c3.metric("💳 Promedio por compra", f"${promedio:,.0f}")
-    c4.metric("✅ Conciliadas",
-              f"{conciliadas}/{num_trans}" if num_trans > 0 else "0/0")
+    c4.metric("✅ Conciliadas", f"{conciliadas}/{num_trans}" if num_trans > 0 else "0/0")
 
     st.markdown("---")
 
@@ -96,7 +115,7 @@ def show_dashboard(df_db: pd.DataFrame):
             values="Cantidad",
             color="Estado",
             title="Proporción de transacciones conciliadas",
-            hole=0.4
+            hole=0.4,
         )
         st.plotly_chart(fig_reconc, use_container_width=True)
 
@@ -105,5 +124,5 @@ def show_dashboard(df_db: pd.DataFrame):
             st.dataframe(df_filtrado, use_container_width=True)
 
     else:
-        st.warning(
-            "⚠️ No hay transacciones que coincidan con los filtros seleccionados.")
+        st.warning("⚠️ No hay transacciones que coincidan con los filtros seleccionados.")
+# === FIN dashboard.py ===
