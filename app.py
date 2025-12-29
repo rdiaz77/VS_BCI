@@ -16,6 +16,7 @@ from data.database import (
     leer_todo_db,
     archivo_ya_procesado,
     registrar_archivo_procesado,
+    migrar_fechas_a_mmddyyyy,
 )
 
 # === SIMPLE PASSWORD PROTECTION USING SECRETS ===
@@ -103,12 +104,32 @@ try:
 except sqlite3.OperationalError:
     pass  # Column already exists
 
+# Try adding TIPO_GASTO column if missing
+try:
+    conn.execute("ALTER TABLE transacciones ADD COLUMN TIPO_GASTO TEXT;")
+    conn.commit()
+except sqlite3.OperationalError:
+    pass  # Column already exists
+
+# Try adding FACT_KAME column if missing
+try:
+    conn.execute("ALTER TABLE transacciones ADD COLUMN FACT_KAME INTEGER DEFAULT 0;")
+    conn.commit()
+except sqlite3.OperationalError:
+    pass  # Column already exists
+
+# Migrar fechas a formato MM/DD/YY(YY) si corresponde
+migrar_fechas_a_mmddyyyy(conn)
+
 # === SUBIR O PROCESAR PDF ===
 uploaded_files = st.file_uploader(
     "📤 Sube tus cartolas en PDF (puedes arrastrarlas aquí):",
     type=["pdf"],
     accept_multiple_files=True,
 )
+
+excluir_terms_raw = st.text_input("🚫 Excluir términos en DESCRIPCION (separados por coma)", value="")
+excluir_terms = [t.strip().lower() for t in excluir_terms_raw.split(",") if t.strip()]
 
 if uploaded_files:
     all_data = []
@@ -122,6 +143,8 @@ if uploaded_files:
 
         pdf_bytes = BytesIO(uploaded_file.read())
         rows = leer_cartola(pdf_bytes, uploaded_file.name)
+        if excluir_terms:
+            rows = [r for r in rows if not any(t in str(r.get("DESCRIPCION","")).lower() for t in excluir_terms)]
         if not rows:
             st.warning(f"⚠️ No se encontraron transacciones en {uploaded_file.name}")
             continue
@@ -216,33 +239,62 @@ if not df_db.empty:
     with tab1:
         df_view = df_db.copy()
         df_view["CONCILIADO"] = df_view["CONCILIADO"].astype(bool)
-        edited_df = st.data_editor(
-            df_view,
+        if "FACT_KAME" not in df_view.columns:
+            df_view["FACT_KAME"] = 0
+        df_view["FACT_KAME"] = df_view["FACT_KAME"].astype(bool)
+        if "TIPO_GASTO" not in df_view.columns:
+            df_view["TIPO_GASTO"] = ""
+        df_view["TIPO_GASTO"] = df_view["TIPO_GASTO"].fillna("").astype(str)
+        
+        df_pendiente_kame = df_view[df_view["FACT_KAME"] == False].copy()
+        df_ingresado_kame = df_view[df_view["FACT_KAME"] == True].copy()
+        
+        st.markdown("### 📄 Pendientes de ingresar en Kame")
+        edited_pendiente = st.data_editor(
+            df_pendiente_kame,
             use_container_width=True,
             hide_index=True,
-            key="editable_df",
+            key="editable_df_pendiente",
             column_config={
-                "CONCILIADO": st.column_config.CheckboxColumn("✅ Conciliado", default=False)
+                "TIPO_GASTO": st.column_config.SelectboxColumn("🗂️ TIPO_GASTO", options=['Alimentacion', 'Alojamiento', 'Combustible', 'Estacionamiento', 'Kilometraje', 'Legales', 'Marketing', 'Materials', 'Otro', 'Pasajes Aereos', 'Peajes', 'Telefonos', 'Trasnporte', 'Viaticos']),
+                "FACT_KAME": st.column_config.CheckboxColumn("📤 FACT_KAME", default=False),
+                "CONCILIADO": st.column_config.CheckboxColumn("✅ Conciliado", default=False),
+            },
+        )
+        
+        st.markdown("### ✅ Ingresado en Kame")
+        edited_ingresado = st.data_editor(
+            df_ingresado_kame,
+            use_container_width=True,
+            hide_index=True,
+            key="editable_df_ingresado",
+            column_config={
+                "TIPO_GASTO": st.column_config.SelectboxColumn("🗂️ TIPO_GASTO", options=['Alimentacion', 'Alojamiento', 'Combustible', 'Estacionamiento', 'Kilometraje', 'Legales', 'Marketing', 'Materials', 'Otro', 'Pasajes Aereos', 'Peajes', 'Telefonos', 'Trasnporte', 'Viaticos']),
+                "FACT_KAME": st.column_config.CheckboxColumn("📤 FACT_KAME", default=True),
+                "CONCILIADO": st.column_config.CheckboxColumn("✅ Conciliado", default=False),
             },
         )
 
-        if st.button("💾 Guardar cambios de conciliación"):
+        if st.button("💾 Guardar cambios"):
+            edited_df = pd.concat([edited_pendiente, edited_ingresado], ignore_index=True)
             for _, row in edited_df.iterrows():
                 conn.execute(
                     """
                     UPDATE transacciones
-                    SET CONCILIADO = ?
+                    SET CONCILIADO = ?, TIPO_GASTO = ?, FACT_KAME = ?
                     WHERE FECHA_OPERACION = ? AND DESCRIPCION = ? AND MONTO_OPERACION = ?
                     """,
                     (
-                        1 if row["CONCILIADO"] else 0,
+                        1 if row.get("CONCILIADO") else 0,
+                        row.get("TIPO_GASTO"),
+                        1 if row.get("FACT_KAME") else 0,
                         row["FECHA_OPERACION"],
                         row["DESCRIPCION"],
                         row["MONTO_OPERACION"],
                     ),
                 )
             conn.commit()
-            st.success("✅ Cambios de conciliación guardados correctamente.")
+            st.success("✅ Cambios guardados correctamente.")
 
         csv_data = df_db.to_csv(index=False).encode("utf-8")
         st.download_button(

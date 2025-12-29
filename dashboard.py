@@ -13,7 +13,10 @@ def show_dashboard(df_db: pd.DataFrame):
     # --- Preprocesamiento ---
     df = df_db.copy()
     df["FECHA_OPERACION"] = pd.to_datetime(
-        df["FECHA_OPERACION"], format="%d/%m/%y", errors="coerce"
+        df["FECHA_OPERACION"], format="%m/%d/%y", errors="coerce"
+    )
+    df.loc[df["FECHA_OPERACION"].isna(), "FECHA_OPERACION"] = pd.to_datetime(
+        df.loc[df["FECHA_OPERACION"].isna(), "FECHA_OPERACION"], format="%d/%m/%y", errors="coerce"
     )
     df = df.dropna(subset=["FECHA_OPERACION"])
     df["MES"] = df["FECHA_OPERACION"].dt.to_period("M").astype(str)

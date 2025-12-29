@@ -12,6 +12,8 @@ def init_db(db_path: str):
             DESCRIPCION TEXT,
             MONTO_OPERACION INTEGER,
             MONTO_TOTAL INTEGER,
+            TIPO_GASTO TEXT,
+            FACT_KAME INTEGER DEFAULT 0,
             ARCHIVO_ORIGEN TEXT,
             CONCILIADO INTEGER DEFAULT 0
         )
@@ -32,14 +34,16 @@ def insertar_en_db(conn, rows):
         return
     conn.executemany("""
         INSERT INTO transacciones
-        (FECHA_OPERACION, DESCRIPCION, MONTO_OPERACION, MONTO_TOTAL, ARCHIVO_ORIGEN)
-        VALUES (?, ?, ?, ?, ?)
+        (FECHA_OPERACION, DESCRIPCION, MONTO_OPERACION, MONTO_TOTAL, TIPO_GASTO, FACT_KAME, ARCHIVO_ORIGEN)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
     """, [
         (
-            row["FECHA_OPERACION"],
+            _transformar_fecha(row.get("FECHA_OPERACION")),
             row["DESCRIPCION"],
             row["MONTO_OPERACION"],
             row["MONTO_TOTAL"],
+            row.get("TIPO_GASTO"),
+            int(row.get("FACT_KAME", 0)),
             row["ARCHIVO_ORIGEN"]
         )
         for row in rows
@@ -50,7 +54,7 @@ def insertar_en_db(conn, rows):
 def leer_todo_db(conn):
     """Lee todas las transacciones de la base de datos."""
     return pd.read_sql_query(
-        "SELECT FECHA_OPERACION, DESCRIPCION, MONTO_OPERACION, MONTO_TOTAL, ARCHIVO_ORIGEN, CONCILIADO "
+        "SELECT FECHA_OPERACION, DESCRIPCION, MONTO_OPERACION, MONTO_TOTAL, TIPO_GASTO, FACT_KAME, ARCHIVO_ORIGEN, CONCILIADO "
         "FROM transacciones ORDER BY FECHA_OPERACION",
         conn
     )
