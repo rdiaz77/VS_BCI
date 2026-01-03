@@ -98,7 +98,11 @@ for ddl in [
     except sqlite3.OperationalError:
         pass
 
-migrar_fechas_a_mmddyyyy(conn)
+# NOTE: Date migration can flip ambiguous dates like "06/10/25" -> "10/06/25".
+# Keep it OFF unless you are sure your stored dates are DD/MM/YY and non-ambiguous.
+run_date_migration = st.sidebar.checkbox("Run date migration (DD/MM → MM/DD)", value=False)
+if run_date_migration:
+    migrar_fechas_a_mmddyyyy(conn)
 
 # ============================================================
 # IMPORTANT: load DB with rowid (no schema change)
@@ -601,4 +605,3 @@ with st.expander("🧹 Delete all history"):
             st.info("Please check the confirmation box before resetting.")
 
 conn.close()
-# === END OF FILE ===
