@@ -6,3 +6,4 @@ Pillow==10.2.0
 plotly==6.3.1
 Unidecode==1.4.0
 python-dateutil==2.9.0
+psycopg2-binary==2.9.9

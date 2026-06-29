@@ -11,7 +11,6 @@ logging.basicConfig(
 _log = logging.getLogger(__name__)
 
 from data.database import (
-    DB_NAME,
     init_db,
     archivo_ya_procesado,
     registrar_archivo_procesado,
@@ -59,27 +58,29 @@ TIPO_GASTO_OPTIONS_INTL = [
 # ============================================================
 # DB connection — cached for the lifetime of the server process
 # ============================================================
-def _get_base_path() -> str:
-    for candidate in ["/mount/src/vs_bci", "/mount", "."]:
+def _pdf_save_dir() -> Path:
+    """Local directory for saving uploaded PDFs.
+    On Streamlit Cloud /mount/src is the persistent volume; fall back to cwd."""
+    for candidate in ["/mount/src/vs_bci/cartolas", "./cartolas"]:
         try:
             p = Path(candidate)
             p.mkdir(parents=True, exist_ok=True)
-            probe = p / ".write_test"
-            probe.write_text("ok", encoding="utf-8")
-            probe.unlink(missing_ok=True)
-            return candidate
+            return p
         except Exception:
             continue
-    return "."
+    return Path("./cartolas")
 
 
 @st.cache_resource
 def get_conn():
-    base = Path(_get_base_path())
-    db_path = str(base / DB_NAME)
-    save_dir = base / "cartolas"
-    save_dir.mkdir(parents=True, exist_ok=True)
-    return init_db(db_path), db_path, save_dir
+    db_url = st.secrets.get("supabase_db_url") or st.secrets.get("SUPABASE_DB_URL")
+    if not db_url:
+        st.error("Falta `supabase_db_url` en los secrets. Configúrala en .streamlit/secrets.toml")
+        st.stop()
+    save_dir = _pdf_save_dir()
+    conn = init_db(db_url)
+    _log.info("Connected to Supabase. PDF save dir: %s", save_dir)
+    return conn, str(db_url), save_dir
 
 
 # ============================================================
@@ -523,7 +524,13 @@ def render_admin(conn, db_path: str) -> None:
         file_name="cartola_tct_bci.csv",
     )
 
-    st.markdown(f"Base de datos: `{db_path}`")
+    # Show host only — never expose credentials
+    import urllib.parse as _up
+    try:
+        _p = _up.urlparse(db_path)
+        st.markdown(f"Base de datos: `{_p.hostname}:{_p.port or 5432}/{_p.path.lstrip('/')}`")
+    except Exception:
+        st.markdown("Base de datos: Supabase PostgreSQL")
 
     with st.expander("🧹 Reset database (borra TODO)"):
         st.warning("Esta acción elimina todas las transacciones, estados y archivos procesados.")
