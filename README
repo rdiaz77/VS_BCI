@@ -1,19 +1,67 @@
-# 📊 Cartolas BCI Extractor
+# Cartolas TCT BCI
 
-A Streamlit web app that extracts and analyzes **BCI credit card statements (cartolas)** from PDF files.
-It stores transactions in a local **SQLite** database, supports **conciliación manual**, and provides an **interactive dashboard** powered by Plotly.
+Streamlit app for ingesting, classifying, and reconciling BCI credit card statements (Nacional CLP + Internacional USD).
 
----
+## Features
 
-## 🚀 Features
+- Upload BCI PDF statements (national and international)
+- Auto-extract transactions with pdfplumber
+- Auto-categorize by description (static rules + learned history)
+- Reconcile international DEUDA TOTAL to national TRASPASO line to compute bank exchange rate
+- Back-fill MONTO_CLP on every international transaction
+- Conciliación + Kame ERP tracking (FACT_KAME flag)
+- Dashboard with spend-by-category chart and uploaded-files summary
+- Password protection via Streamlit secrets
 
-- 🧩 PDF extraction with `pdfplumber` and regex
-- 💾 Persistent SQLite database
-- 🔐 Password protection via Streamlit secrets
-- 📊 Interactive dashboard (Plotly + Streamlit)
-- ✅ Conciliación tracking with checkbox editing
-- 🧹 Reset database option for maintenance
+## Project structure
 
----
+```
+app.py                          Main Streamlit app
+dashboard.py                    Dashboard + archivos table
+data/
+  database.py                   SQLite layer (cartola_tct_bci.db)
+  extractor_nacional.py         BCI national PDF parser (CLP)
+  extractor_internacional.py    BCI international PDF parser (USD)
+.streamlit/
+  config.toml                   Server settings (committed)
+  secrets.toml                  Passwords (gitignored — see secrets.toml.example)
+  secrets.toml.example          Template for secrets
+requirements.txt
+runtime.txt
+```
 
-## 🗂️ Project Structure
+## Local setup
+
+```bash
+python -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+
+cp .streamlit/secrets.toml.example .streamlit/secrets.toml
+# edit secrets.toml and set app_password
+
+streamlit run app.py
+```
+
+## Streamlit Cloud deployment
+
+1. Push this repo to GitHub.
+2. Connect on share.streamlit.io and point to app.py.
+3. Under Settings > Secrets, add:
+   ```toml
+   app_password = "your-password"
+   ```
+4. The DB and uploaded PDFs are stored under /mount/src/vs_bci/ on Streamlit Cloud.
+   Data persists across reruns but is cleared on redeployment — export CSV regularly from the Admin tab.
+
+## Exchange-rate reconciliation
+
+The international DEUDA TOTAL (USD) is transferred to the national statement as a single
+TRASPASO DEUDA INTERNACIONAL (CLP) line the following month. The app:
+
+1. Finds the international credit line whose |USD| equals a statement DEUDA TOTAL.
+2. Matches it to the national CLP line on the same date.
+3. Computes tasa = CLP / USD and back-fills MONTO_CLP for every transaction in that statement.
+
+Matching is automatic when unambiguous; a manual dropdown is shown otherwise.
+A sanity check flags any resulting rate outside 800-1100 CLP/US$.

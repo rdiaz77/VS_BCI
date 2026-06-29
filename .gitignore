@@ -9,7 +9,7 @@ venv/
 .venv/
 
 # --- Streamlit ---
-.streamlit/
+.streamlit/secrets.toml
 
 # --- macOS ---
 .DS_Store
@@ -23,8 +23,11 @@ cartolas_bci.db
 procesados.txt
 *.csv
 *.log
+*.db
+*.db-shm
+*.db-wal
 
 # --- PDFs or user data ---
+Cartolas/
 cartolas/
 *.pdf
-.streamlit/secrets.toml

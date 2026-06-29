@@ -1,0 +1,11 @@
+[server]
+headless = true
+enableCORS = false
+enableXsrfProtection = true
+maxUploadSize = 20        # MB — BCI PDFs are well under 5 MB
+
+[browser]
+gatherUsageStats = false
+
+[theme]
+base = "light"
