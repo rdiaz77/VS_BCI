@@ -62,7 +62,9 @@ def _sort_expr(col: str) -> str:
 
 def init_db(db_url: str):
     """Connect to Supabase/PostgreSQL, create tables if needed, return connection."""
-    conn = psycopg2.connect(db_url)
+    from urllib.parse import urlparse as _up, unquote as _uq
+    _u = _up(db_url.replace("#", "%23"))
+    conn = psycopg2.connect(host=_u.hostname, port=_u.port, dbname=_u.path.lstrip("/"), user=_u.username, password=_uq(_u.password), sslmode="require")
     conn.autocommit = False
 
     with conn.cursor() as cur:
