@@ -1,6 +1,4 @@
 import logging
-from pathlib import Path
-
 import pandas as pd
 import streamlit as st
 
@@ -58,29 +56,15 @@ TIPO_GASTO_OPTIONS_INTL = [
 # ============================================================
 # DB connection — cached for the lifetime of the server process
 # ============================================================
-def _pdf_save_dir() -> Path:
-    """Local directory for saving uploaded PDFs.
-    On Streamlit Cloud /mount/src is the persistent volume; fall back to cwd."""
-    for candidate in ["/mount/src/vs_bci/cartolas", "./cartolas"]:
-        try:
-            p = Path(candidate)
-            p.mkdir(parents=True, exist_ok=True)
-            return p
-        except Exception:
-            continue
-    return Path("./cartolas")
-
-
 @st.cache_resource
 def get_conn():
     db_url = st.secrets.get("supabase_db_url") or st.secrets.get("SUPABASE_DB_URL")
     if not db_url:
         st.error("Falta `supabase_db_url` en los secrets. Configúrala en .streamlit/secrets.toml")
         st.stop()
-    save_dir = _pdf_save_dir()
     conn = init_db(db_url)
-    _log.info("Connected to Supabase. PDF save dir: %s", save_dir)
-    return conn, str(db_url), save_dir
+    _log.info("Connected to Supabase PostgreSQL")
+    return conn, str(db_url)
 
 
 # ============================================================
@@ -114,38 +98,10 @@ def require_password() -> None:
 # ============================================================
 # PDF save helpers
 # ============================================================
-def _build_pdf_save_name(meta: dict) -> str:
-    """
-    Build a canonical PDF filename from statement metadata.
-    Format: {FirstName}_{MM}_{DD}_{YY}_{NACIONAL|INTERNACIONAL}.pdf
-    FECHA_ESTADO arrives as DD-MM-YYYY (from the extractor).
-    """
-    titular = (meta.get("TITULAR_NOMBRE") or "Desconocido").split()[0]
-    origen  = meta.get("ORIGEN", "DESCONOCIDO")
-    fecha   = meta.get("FECHA_ESTADO", "")
-
-    try:
-        # FECHA_ESTADO is DD-MM-YYYY → reformat to MM_DD_YY
-        dd, mm, yyyy = fecha.split("-")
-        yy = yyyy[-2:]
-        date_part = f"{mm}_{dd}_{yy}"
-    except Exception:
-        date_part = fecha.replace("-", "_").replace("/", "_")
-
-    return f"{titular}_{date_part}_{origen}.pdf"
-
-
-def _save_pdf(pdf_bytes: bytes, save_dir: Path, filename: str) -> None:
-    save_dir.mkdir(parents=True, exist_ok=True)
-    dest = save_dir / filename
-    if not dest.exists():
-        dest.write_bytes(pdf_bytes)
-
-
 # ============================================================
-# Ingest (upload → DB + disk)
+# Ingest (upload → DB)
 # ============================================================
-def _ingest(conn, uploaded, extractor, exclude_terms: list[str], save_dir: Path) -> None:
+def _ingest(conn, uploaded, extractor, exclude_terms: list[str]) -> None:
     ingested = skipped = 0
     for f in uploaded:
         if archivo_ya_procesado(conn, f.name):
@@ -153,9 +109,8 @@ def _ingest(conn, uploaded, extractor, exclude_terms: list[str], save_dir: Path)
             skipped += 1
             continue
 
-        pdf_bytes = f.read()
         try:
-            rows, meta = extractor(pdf_bytes, filename=f.name)
+            rows, meta = extractor(f.read(), filename=f.name)
         except Exception as e:
             _log.exception("PDF extraction failed: %s", f.name)
             st.error(f"Error leyendo {f.name}: {e}")
@@ -179,8 +134,6 @@ def _ingest(conn, uploaded, extractor, exclude_terms: list[str], save_dir: Path)
             insertar_transacciones(conn, rows)
             upsert_estado_cuenta(conn, meta)
             registrar_archivo_procesado(conn, f.name)
-            save_name = _build_pdf_save_name(meta)
-            _save_pdf(pdf_bytes, save_dir, save_name)
             ingested += 1
         else:
             st.warning(f"Sin filas válidas en {f.name}. No se registra como procesado.")
@@ -193,7 +146,7 @@ def _ingest(conn, uploaded, extractor, exclude_terms: list[str], save_dir: Path)
 # ============================================================
 # Transactions page — shared by Nacional / Internacional
 # ============================================================
-def render_transactions_page(conn, origen: str, save_dir: Path) -> None:
+def render_transactions_page(conn, origen: str) -> None:
     is_intl = origen == "INTERNACIONAL"
     cur_label = "US$" if is_intl else "CLP"
     extractor = leer_cartola_internacional if is_intl else leer_cartola_nacional
@@ -211,7 +164,7 @@ def render_transactions_page(conn, origen: str, save_dir: Path) -> None:
         sig = tuple(sorted(f.name for f in uploaded))
         if st.session_state.get(f"_sig_{origen}") != sig:
             st.session_state[f"_sig_{origen}"] = sig
-            _ingest(conn, uploaded, extractor, exclude_terms, save_dir)
+            _ingest(conn, uploaded, extractor, exclude_terms)
 
     # ---- Load from DB ----
     cols, rows = fetch_transacciones(conn, origen=origen)
@@ -549,7 +502,7 @@ def render_admin(conn, db_path: str) -> None:
 def main() -> None:
     require_password()
 
-    conn, db_path, save_dir = get_conn()
+    conn, db_path = get_conn()
 
     st.title("📊 Cartolas TCT BCI")
 
@@ -565,9 +518,9 @@ def main() -> None:
     )
 
     if page == "📄 Nacional (CLP)":
-        render_transactions_page(conn, "NACIONAL", save_dir)
+        render_transactions_page(conn, "NACIONAL")
     elif page == "🌎 Internacional (USD)":
-        render_transactions_page(conn, "INTERNACIONAL", save_dir)
+        render_transactions_page(conn, "INTERNACIONAL")
     elif page == "🔗 Conciliación Traspaso":
         render_traspaso_page(conn)
     elif page == "📈 Dashboard":
