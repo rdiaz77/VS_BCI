@@ -37,18 +37,6 @@ TRANSACCIONES_COLS = [
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _cur(conn):
-    """Return a dict-aware cursor."""
-    return conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-
-
-def _exec(conn, sql: str, params=None):
-    """Execute a single statement and return the cursor."""
-    cur = conn.cursor()
-    cur.execute(sql, params)
-    return cur
-
-
 def _sort_expr(col: str) -> str:
     """Reformat MM/DD/YY text column to YYMMDD for correct chronological sort."""
     return (

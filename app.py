@@ -148,7 +148,6 @@ def _ingest(conn, uploaded, extractor, exclude_terms: list[str]) -> None:
 # ============================================================
 def render_transactions_page(conn, origen: str) -> None:
     is_intl = origen == "INTERNACIONAL"
-    cur_label = "US$" if is_intl else "CLP"
     extractor = leer_cartola_internacional if is_intl else leer_cartola_nacional
 
     st.subheader(f"1) Cargar PDFs — {'Internacional (USD)' if is_intl else 'Nacional (CLP)'}")
@@ -450,7 +449,7 @@ def render_traspaso_page(conn) -> None:
             with c1:
                 deuda = row["DEUDA_TOTAL"]
                 deuda_str = f"US$ {deuda:,.2f}" if deuda is not None else "—"
-                tasa = row.get("TASA_CAMBIO") if hasattr(row, "get") else row["TASA_CAMBIO"]
+                tasa = row.get("TASA_CAMBIO")
                 tasa_str = f" · Tasa: **{tasa:,.2f} CLP/US$**" if tasa else ""
                 st.markdown(
                     f"✅ **{row['ARCHIVO_ORIGEN']}** · {deuda_str} → "
