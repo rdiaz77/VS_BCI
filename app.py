@@ -63,8 +63,24 @@ def get_conn():
         st.error("Falta `supabase_db_url` en los secrets. Configúrala en .streamlit/secrets.toml")
         st.stop()
     conn = init_db(db_url)
-    _log.info("Connected to Supabase PostgreSQL")
+    _log.info("Connected to PostgreSQL")
     return conn, str(db_url)
+
+
+def _ensure_conn(conn, db_url: str):
+    """Return a live connection, reconnecting if Neon closed the idle connection."""
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1")
+        return conn
+    except Exception:
+        _log.warning("Connection lost, reconnecting...")
+        try:
+            conn.close()
+        except Exception:
+            pass
+        st.cache_resource.clear()
+        return init_db(db_url)
 
 
 # ============================================================
@@ -512,6 +528,7 @@ def main() -> None:
     require_password()
 
     conn, db_path = get_conn()
+    conn = _ensure_conn(conn, db_path)
 
     st.title("📊 Cartolas TCT BCI")
 
