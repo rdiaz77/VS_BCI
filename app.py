@@ -192,7 +192,9 @@ def render_transactions_page(conn, origen: str) -> None:
                 )
             else:
                 def _fmt_opt(rid, _opts=disponibles):
-                    o = next(x for x in _opts if x["rid"] == rid)
+                    o = next((x for x in _opts if x["rid"] == rid), None)
+                    if o is None:
+                        return str(rid)
                     return f"{o['fecha']} · CLP {int(o['clp']):,}"
 
                 opt_rids = [o["rid"] for o in disponibles]
@@ -368,19 +370,27 @@ def render_transactions_page(conn, origen: str) -> None:
         with c1:
             if st.button("💾 Guardar cambios", key=f"save_{origen}"):
                 records = edited[["_RID_", "TIPO_GASTO", "CONCILIADO"]].to_dict("records")
-                update_clasificacion(conn, records)
-                propagar_clasificacion(conn, records)
-                st.success("Cambios guardados.")
-                st.rerun()
+                try:
+                    update_clasificacion(conn, records)
+                    propagar_clasificacion(conn, records)
+                    st.success("Cambios guardados.")
+                    st.rerun()
+                except Exception as e:
+                    _log.exception("guardar cambios failed")
+                    st.error(f"Error al guardar: {e}")
 
         with c2:
             if st.button("➡️ Mover a Kame", disabled=not all_ready, key=f"move_{origen}"):
                 records = edited[["_RID_", "TIPO_GASTO", "CONCILIADO"]].to_dict("records")
-                update_clasificacion(conn, records)
-                propagar_clasificacion(conn, records)
-                marcar_fact_kame(conn, selected["_RID_"].astype(int).tolist())
-                st.success(f"{len(selected)} transacción(es) movida(s) a Kame.")
-                st.rerun()
+                try:
+                    update_clasificacion(conn, records)
+                    propagar_clasificacion(conn, records)
+                    marcar_fact_kame(conn, selected["_RID_"].astype(int).tolist())
+                    st.success(f"{len(selected)} transacción(es) movida(s) a Kame.")
+                    st.rerun()
+                except Exception as e:
+                    _log.exception("mover a kame failed")
+                    st.error(f"Error al mover a Kame: {e}")
 
             if not selected.empty and not all_ready:
                 st.info("Para mover: todas deben estar CONCILIADAS y con TIPO_GASTO definido.")

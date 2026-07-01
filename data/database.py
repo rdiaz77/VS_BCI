@@ -189,13 +189,17 @@ def insertar_transacciones(conn, rows: Iterable[Dict[str, Any]]) -> int:
         for r in rows
     ]
 
-    with conn.cursor() as cur:
-        psycopg2.extras.execute_many(
-            cur,
-            f"INSERT INTO transacciones ({col_list}) VALUES ({placeholders});",
-            data,
-        )
-    conn.commit()
+    try:
+        with conn.cursor() as cur:
+            psycopg2.extras.execute_many(
+                cur,
+                f"INSERT INTO transacciones ({col_list}) VALUES ({placeholders});",
+                data,
+            )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
     return len(rows)
 
 
@@ -422,7 +426,7 @@ def fetch_traspaso_suggestions(
               AND MONTO_OPERACION IS NOT NULL
             """
         )
-        credits = [(f, abs(float(u))) for f, u in cur.fetchall()]
+        credits = [(f, abs(float(u))) for f, u in cur.fetchall() if u is not None]
 
     suggestions: Dict[int, Dict[str, Any]] = {}
     ambiguous: set = set()
@@ -447,15 +451,10 @@ def fetch_traspaso_suggestions(
 
 
 def auto_match_traspasos(conn) -> int:
-    applied = 0
-    for _ in range(1000):
-        suggestions, _ = fetch_traspaso_suggestions(conn)
-        if not suggestions:
-            break
-        est_id, s = next(iter(suggestions.items()))
+    suggestions, _ = fetch_traspaso_suggestions(conn)
+    for est_id, s in suggestions.items():
         marcar_traspaso(conn, est_id, s["rid"], s["archivo"])
-        applied += 1
-    return applied
+    return len(suggestions)
 
 
 # ---------------------------------------------------------------------------

@@ -19,7 +19,7 @@ Streamlit app for ingesting, classifying, and reconciling BCI credit card statem
 app.py                          Main Streamlit app
 dashboard.py                    Dashboard + archivos table
 data/
-  database.py                   SQLite layer (cartola_tct_bci.db)
+  database.py                   PostgreSQL layer (Neon via psycopg2)
   extractor_nacional.py         BCI national PDF parser (CLP)
   extractor_internacional.py    BCI international PDF parser (USD)
 .streamlit/
@@ -50,9 +50,9 @@ streamlit run app.py
 3. Under Settings > Secrets, add:
    ```toml
    app_password = "your-password"
+   supabase_db_url = "postgresql://user:password@host/dbname?sslmode=require"
    ```
-4. The DB and uploaded PDFs are stored under /mount/src/vs_bci/ on Streamlit Cloud.
-   Data persists across reruns but is cleared on redeployment — export CSV regularly from the Admin tab.
+4. Data is stored in Neon PostgreSQL and persists across redeployments.
 
 ## Exchange-rate reconciliation
 
