@@ -191,7 +191,7 @@ def insertar_transacciones(conn, rows: Iterable[Dict[str, Any]]) -> int:
 
     try:
         with conn.cursor() as cur:
-            psycopg2.extras.execute_many(
+            psycopg2.extras.execute_batch(
                 cur,
                 f"INSERT INTO transacciones ({col_list}) VALUES ({placeholders});",
                 data,
@@ -226,7 +226,7 @@ def update_clasificacion(conn, updates: List[Dict[str, Any]]) -> None:
     if not updates:
         return
     with conn.cursor() as cur:
-        psycopg2.extras.execute_many(
+        psycopg2.extras.execute_batch(
             cur,
             "UPDATE transacciones SET TIPO_GASTO = %s, CONCILIADO = %s WHERE id = %s;",
             [
@@ -245,7 +245,7 @@ def marcar_fact_kame(conn, rowids: List[int]) -> None:
     if not rowids:
         return
     with conn.cursor() as cur:
-        psycopg2.extras.execute_many(
+        psycopg2.extras.execute_batch(
             cur,
             "UPDATE transacciones SET FACT_KAME = 1 WHERE id = %s;",
             [(int(r),) for r in rowids],
