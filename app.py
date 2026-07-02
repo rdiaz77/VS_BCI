@@ -254,9 +254,11 @@ def render_transactions_page(conn, origen: str) -> None:
     if not df.empty:
         import plotly.express as px
         monto_col_summary = "MONTO_OPERACION" if is_intl else "MONTO_TOTAL"
+        if monto_col_summary not in df.columns:
+            monto_col_summary = next((c for c in ["MONTO_TOTAL", "MONTO_OPERACION"] if c in df.columns), None)
         cur_label = "US$" if is_intl else "CLP"
         st.subheader("2) Resumen por Tipo de Gasto")
-        df_gastos   = df[df[monto_col_summary] > 0].copy()
+        df_gastos = df[df[monto_col_summary] > 0].copy() if monto_col_summary else df.iloc[0:0].copy()
         df_con_tipo = df_gastos[df_gastos["TIPO_GASTO"].fillna("") != ""]
         df_sin_tipo = df_gastos[df_gastos["TIPO_GASTO"].fillna("") == ""]
 
@@ -295,12 +297,15 @@ def render_transactions_page(conn, origen: str) -> None:
     done    = df[df["FACT_KAME"] == 1].copy()
 
     monto_col = "MONTO_OPERACION" if is_intl else "MONTO_TOTAL"
+    if monto_col not in df.columns:
+        monto_col = next((c for c in ["MONTO_TOTAL", "MONTO_OPERACION", "MONTO_ORIGEN"] if c in df.columns), None)
 
     # Columns shown in the editable pending table
     display_cols = ["_RID_", "TITULAR_NOMBRE", "FECHA_OPERACION", "DESCRIPCION"]
     if is_intl:
         display_cols += ["CIUDAD", "PAIS"]
-    display_cols += [monto_col]
+    if monto_col:
+        display_cols += [monto_col]
     if is_intl:
         display_cols += ["MONTO_CLP"]
     display_cols += ["TIPO_GASTO", "CONCILIADO"]
