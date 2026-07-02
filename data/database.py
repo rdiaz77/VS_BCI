@@ -218,7 +218,7 @@ def fetch_transacciones(
             cur.execute(
                 f"SELECT id AS _RID_, * FROM transacciones ORDER BY {sort}"
             )
-        cols = [d[0] for d in cur.description]
+        cols = [d[0].upper() for d in cur.description]
         return cols, cur.fetchall()
 
 
@@ -294,7 +294,7 @@ def fetch_estados_cuenta(
             )
         else:
             cur.execute("SELECT * FROM estados_cuenta ORDER BY ORIGEN, FECHA_ESTADO")
-        cols = [d[0] for d in cur.description]
+        cols = [d[0].upper() for d in cur.description]
         return cols, cur.fetchall()
 
 
@@ -560,7 +560,7 @@ def fetch_archivos_resumen(conn) -> Tuple[List[str], List[tuple]]:
                 substring(ec.FECHA_ESTADO,7,4)||substring(ec.FECHA_ESTADO,4,2)||substring(ec.FECHA_ESTADO,1,2) DESC
             """
         )
-        cols = [d[0] for d in cur.description]
+        cols = [d[0].upper() for d in cur.description]
         return cols, cur.fetchall()
 
 
