@@ -585,7 +585,7 @@ def delete_estado_cuenta(conn, archivo_origen: str) -> None:
             )
         cur.execute("DELETE FROM transacciones       WHERE ARCHIVO_ORIGEN = %s", (archivo_origen,))
         cur.execute("DELETE FROM estados_cuenta      WHERE ARCHIVO_ORIGEN = %s", (archivo_origen,))
-        cur.execute("DELETE FROM archivos_procesados WHERE nombre          = %s", (archivo_origen,))
+        cur.execute("DELETE FROM archivos_procesados WHERE nombre = %s", (archivo_origen,))
     conn.commit()
 
 
