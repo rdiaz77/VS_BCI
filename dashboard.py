@@ -16,7 +16,7 @@ def _parse_dates(df: pd.DataFrame) -> pd.DataFrame:
 
 def show_archivos(conn) -> None:
     """Table of uploaded statements — shown at the top of the dashboard."""
-    from data.database import fetch_archivos_resumen
+    from data.database import fetch_archivos_resumen, delete_estado_cuenta
 
     cols, rows = fetch_archivos_resumen(conn)
     if not rows:
@@ -27,56 +27,63 @@ def show_archivos(conn) -> None:
 
     # Sort by FECHA_ESTADO (DD-MM-YYYY) chronologically
     df["_fecha_dt"] = pd.to_datetime(df["FECHA_ESTADO"], format="%d-%m-%Y", errors="coerce")
-    df = df.sort_values("_fecha_dt", ascending=False).drop(columns=["_fecha_dt"])
-
-    # Friendly column names
-    rename = {
-        "ORIGEN":          "Origen",
-        "TITULAR":         "Titular",
-        "ARCHIVO":         "Archivo",
-        "FECHA_ESTADO":    "Fecha estado",
-        "PERIODO_DESDE":   "Período desde",
-        "PERIODO_HASTA":   "Período hasta",
-        "DEUDA_TOTAL":     "Deuda total",
-        "MONEDA":          "Moneda",
-        "TRASPASO_ESTADO": "Traspaso",
-        "TRANSACCIONES":   "Transacciones",
-    }
-    df = df.rename(columns=rename)
+    df = df.sort_values("_fecha_dt", ascending=False).drop(columns=["_fecha_dt"]).reset_index(drop=True)
 
     # Format deuda_total: CLP integer, USD 2 decimals
     def _fmt_deuda(row):
         try:
-            v = float(row["Deuda total"])
-            return f"{v:,.0f}" if row["Moneda"] == "CLP" else f"{v:,.2f}"
+            v = float(row["DEUDA_TOTAL"])
+            return f"{v:,.0f}" if row["MONEDA"] == "CLP" else f"{v:,.2f}"
         except Exception:
             return ""
 
-    df["Deuda total"] = df.apply(_fmt_deuda, axis=1)
-
-    # Badge-style traspaso
-    df["Traspaso"] = df["Traspaso"].map(
+    df["DEUDA_TOTAL"] = df.apply(_fmt_deuda, axis=1)
+    df["TRASPASO_ESTADO"] = df["TRASPASO_ESTADO"].map(
         lambda s: "✅ Traspasado" if s == "TRASPASADO" else "⏳ Pendiente"
     )
 
-    col_cfg = {
-        "Transacciones": st.column_config.NumberColumn("Transacciones", format="%d"),
-    }
+    def _render_group(label: str, group_df: pd.DataFrame) -> None:
+        st.markdown(f"**{label}** ({len(group_df)})")
+        if group_df.empty:
+            st.caption("Sin archivos.")
+            return
+        for _, row in group_df.iterrows():
+            archivo = row["ARCHIVO"]
+            key_confirm = f"confirm_del_{archivo}"
 
-    nac  = df[df["Origen"] == "NACIONAL"].drop(columns=["Origen"])
-    intl = df[df["Origen"] == "INTERNACIONAL"].drop(columns=["Origen"])
+            c1, c2, c3, c4, c5, c6, c7 = st.columns([2, 2, 2, 2, 2, 1, 1])
+            c1.write(row["FECHA_ESTADO"])
+            c2.write(row["TITULAR"])
+            c3.write(f"{row['DEUDA_TOTAL']} {row['MONEDA']}")
+            c4.write(row["TRASPASO_ESTADO"])
+            c5.write(f"{int(row['TRANSACCIONES'])} transacciones")
 
-    st.markdown(f"**🇨🇱 Nacional** ({len(nac)})")
-    if nac.empty:
-        st.caption("Sin archivos nacionales.")
-    else:
-        st.dataframe(nac, use_container_width=True, hide_index=True, column_config=col_cfg)
+            if st.session_state.get(key_confirm):
+                with c6:
+                    if st.button("Confirmar", key=f"ok_{archivo}", type="primary"):
+                        try:
+                            delete_estado_cuenta(conn, archivo)
+                            st.session_state.pop(key_confirm, None)
+                            st.success(f"Eliminado: {archivo}")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Error al eliminar: {e}")
+                with c7:
+                    if st.button("Cancelar", key=f"cancel_{archivo}"):
+                        st.session_state.pop(key_confirm, None)
+                        st.rerun()
+            else:
+                with c7:
+                    if st.button("🗑️", key=f"del_{archivo}", help=f"Eliminar {archivo}"):
+                        st.session_state[key_confirm] = True
+                        st.rerun()
 
-    st.markdown(f"**🌎 Internacional** ({len(intl)})")
-    if intl.empty:
-        st.caption("Sin archivos internacionales.")
-    else:
-        st.dataframe(intl, use_container_width=True, hide_index=True, column_config=col_cfg)
+    nac  = df[df["ORIGEN"] == "NACIONAL"].drop(columns=["ORIGEN"])
+    intl = df[df["ORIGEN"] == "INTERNACIONAL"].drop(columns=["ORIGEN"])
+
+    _render_group("🇨🇱 Nacional", nac)
+    st.markdown("")
+    _render_group("🌎 Internacional", intl)
 
 
 def show_dashboard(df_db: pd.DataFrame, conn=None) -> None:

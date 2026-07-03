@@ -568,6 +568,15 @@ def fetch_archivos_resumen(conn) -> Tuple[List[str], List[tuple]]:
 # Admin
 # ---------------------------------------------------------------------------
 
+def delete_estado_cuenta(conn, archivo_origen: str) -> None:
+    """Delete a statement and all its transactions + dedup record."""
+    with conn.cursor() as cur:
+        cur.execute("DELETE FROM transacciones       WHERE ARCHIVO_ORIGEN = %s", (archivo_origen,))
+        cur.execute("DELETE FROM estados_cuenta      WHERE ARCHIVO_ORIGEN = %s", (archivo_origen,))
+        cur.execute("DELETE FROM archivos_procesados WHERE nombre          = %s", (archivo_origen,))
+    conn.commit()
+
+
 def reset_db(conn) -> None:
     with conn.cursor() as cur:
         cur.execute("TRUNCATE transacciones, estados_cuenta, archivos_procesados RESTART IDENTITY CASCADE;")
