@@ -447,7 +447,7 @@ def render_transactions_page(conn, origen: str) -> None:
     if done.empty:
         st.info("Aún no hay transacciones ingresadas.")
     else:
-        from data.database import delete_transacciones
+        from data.database import mover_a_pendientes
         view_done = ["_RID_"] + [c for c in display_cols if c not in ("_RID_", "FACT_KAME")] + ["ARCHIVO_ORIGEN"]
         view_done = [c for c in view_done if c in done.columns]
         done["_FECHA_DT"] = pd.to_datetime(done["FECHA_OPERACION"], format="%m/%d/%y", errors="coerce")
@@ -472,13 +472,13 @@ def render_transactions_page(conn, origen: str) -> None:
         )
         to_delete = edited_done[edited_done["_ELIMINAR_"] == True]
         if not to_delete.empty:
-            if st.button(f"🗑️ Eliminar {len(to_delete)} fila(s) seleccionada(s)", key=f"del_done_{origen}", type="primary"):
+            if st.button(f"↩️ Devolver {len(to_delete)} fila(s) a Pendientes", key=f"del_done_{origen}", type="primary"):
                 try:
-                    delete_transacciones(conn, to_delete["_RID_"].astype(int).tolist())
-                    st.success(f"{len(to_delete)} transacción(es) eliminada(s).")
+                    mover_a_pendientes(conn, to_delete["_RID_"].astype(int).tolist())
+                    st.success(f"{len(to_delete)} transacción(es) devuelta(s) a Pendientes.")
                     st.rerun()
                 except Exception as e:
-                    st.error(f"Error al eliminar: {e}")
+                    st.error(f"Error: {e}")
 
 
 # ============================================================

@@ -588,13 +588,13 @@ def fetch_archivos_resumen(conn) -> Tuple[List[str], List[tuple]]:
 # Admin
 # ---------------------------------------------------------------------------
 
-def delete_transacciones(conn, rids: list) -> None:
-    """Permanently delete specific transactions by _RID_."""
+def mover_a_pendientes(conn, rids: list) -> None:
+    """Move transactions back to Pendientes by resetting FACT_KAME."""
     if not rids:
         return
     with conn.cursor() as cur:
         cur.execute(
-            f"DELETE FROM transacciones WHERE id = ANY(%s)",
+            "UPDATE transacciones SET FACT_KAME = 0 WHERE id = ANY(%s)",
             (rids,),
         )
     conn.commit()
