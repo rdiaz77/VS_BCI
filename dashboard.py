@@ -51,9 +51,10 @@ def show_archivos(conn) -> None:
             archivo = row["ARCHIVO"]
             key_confirm = f"confirm_del_{archivo}"
 
-            total_tx = int(row["TRANSACCIONES"])
-            conc_tx  = int(row["CONCILIADAS"])
-            dot = "🟢" if total_tx > 0 and conc_tx == total_tx else "🔴"
+            total_tx   = int(row["TRANSACCIONES"])
+            conc_tx    = int(row["CONCILIADAS"])
+            fully_conc = total_tx > 0 and conc_tx == total_tx
+            dot = "🟢" if fully_conc else "🔴"
 
             c1, c2, c3, c4, c5, c6, c7 = st.columns([2, 2, 2, 2, 2, 1, 1])
             c1.write(row["FECHA_ESTADO"])
@@ -71,16 +72,21 @@ def show_archivos(conn) -> None:
                             st.success(f"Eliminado: {archivo}")
                             st.rerun()
                         except Exception as e:
-                            st.error(f"Error al eliminar: {e}")
+                            st.session_state.pop(key_confirm, None)
+                            st.error(str(e))
                 with c7:
                     if st.button("Cancelar", key=f"cancel_{archivo}"):
                         st.session_state.pop(key_confirm, None)
                         st.rerun()
             else:
                 with c7:
-                    if st.button("🗑️", key=f"del_{archivo}", help=f"Eliminar {archivo}"):
-                        st.session_state[key_confirm] = True
-                        st.rerun()
+                    if fully_conc:
+                        st.button("🗑️", key=f"del_{archivo}", disabled=True,
+                                  help="No se puede eliminar: todas las transacciones están conciliadas.")
+                    else:
+                        if st.button("🗑️", key=f"del_{archivo}", help=f"Eliminar {archivo}"):
+                            st.session_state[key_confirm] = True
+                            st.rerun()
 
     nac  = df[df["ORIGEN"] == "NACIONAL"].drop(columns=["ORIGEN"])
     intl = df[df["ORIGEN"] == "INTERNACIONAL"].drop(columns=["ORIGEN"])

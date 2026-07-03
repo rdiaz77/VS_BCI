@@ -571,8 +571,18 @@ def fetch_archivos_resumen(conn) -> Tuple[List[str], List[tuple]]:
 # ---------------------------------------------------------------------------
 
 def delete_estado_cuenta(conn, archivo_origen: str) -> None:
-    """Delete a statement and all its transactions + dedup record."""
+    """Delete a statement and all its transactions + dedup record.
+    Raises ValueError if any transaction is already conciliada."""
     with conn.cursor() as cur:
+        cur.execute(
+            "SELECT COUNT(*) FROM transacciones WHERE ARCHIVO_ORIGEN = %s AND CONCILIADO = 1",
+            (archivo_origen,),
+        )
+        conc_count = cur.fetchone()[0]
+        if conc_count:
+            raise ValueError(
+                f"No se puede eliminar: {conc_count} transacción(es) ya están conciliadas."
+            )
         cur.execute("DELETE FROM transacciones       WHERE ARCHIVO_ORIGEN = %s", (archivo_origen,))
         cur.execute("DELETE FROM estados_cuenta      WHERE ARCHIVO_ORIGEN = %s", (archivo_origen,))
         cur.execute("DELETE FROM archivos_procesados WHERE nombre          = %s", (archivo_origen,))
