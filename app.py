@@ -10,7 +10,7 @@ _log = logging.getLogger(__name__)
 
 from data.database import (
     init_db,
-    archivo_ya_procesado,
+    estado_ya_procesado,
     registrar_archivo_procesado,
     insertar_transacciones,
     fetch_transacciones,
@@ -120,16 +120,18 @@ def require_password() -> None:
 def _ingest(conn, uploaded, extractor, exclude_terms: list[str]) -> None:
     ingested = skipped = 0
     for f in uploaded:
-        if archivo_ya_procesado(conn, f.name):
-            st.warning(f"⚠️ **{f.name}** ya fue procesado anteriormente — omitido.")
-            skipped += 1
-            continue
-
         try:
             rows, meta = extractor(f.read(), filename=f.name)
         except Exception as e:
             _log.exception("PDF extraction failed: %s", f.name)
             st.error(f"Error leyendo {f.name}: {e}")
+            continue
+
+        if estado_ya_procesado(conn, meta):
+            titular = meta.get("TITULAR_NOMBRE", "")
+            fecha   = meta.get("FECHA_ESTADO", "")
+            st.warning(f"⚠️ **{f.name}** — estado de {titular} con fecha {fecha} ya fue procesado anteriormente — omitido.")
+            skipped += 1
             continue
 
         if exclude_terms:

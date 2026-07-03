@@ -137,6 +137,24 @@ def init_db(db_url: str):
 # Processed-file dedup
 # ---------------------------------------------------------------------------
 
+def estado_ya_procesado(conn, meta: dict) -> bool:
+    """Check by statement identity (titular + fecha + origen), not filename."""
+    titular    = meta.get("TITULAR_NOMBRE", "")
+    fecha      = meta.get("FECHA_ESTADO", "")
+    origen     = meta.get("ORIGEN", "")
+    if not (titular and fecha and origen):
+        return False
+    with conn.cursor() as cur:
+        cur.execute(
+            """SELECT 1 FROM estados_cuenta
+               WHERE TITULAR_NOMBRE = %s AND FECHA_ESTADO = %s AND ORIGEN = %s
+               LIMIT 1""",
+            (titular, fecha, origen),
+        )
+        return cur.fetchone() is not None
+
+
+# Keep for backwards compat — unused after this refactor
 def archivo_ya_procesado(conn, filename: str) -> bool:
     with conn.cursor() as cur:
         cur.execute(
