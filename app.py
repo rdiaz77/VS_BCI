@@ -379,6 +379,20 @@ def render_transactions_page(conn, origen: str) -> None:
             key=f"editor_{origen}",
         )
 
+        # ── Conciliado sum ────────────────────────────────────
+        if not is_intl:
+            conc_rows = edited[edited["CONCILIADO"] == True]
+            if not conc_rows.empty:
+                rids_conc = conc_rows["_RID_"].tolist()
+                amounts_conc = pending.loc[pending["_RID_"].isin(rids_conc), monto_col]
+                total_conc = float(amounts_conc.sum())
+                gastos_conc = float(amounts_conc[amounts_conc > 0].sum())
+                abonos_conc = float(amounts_conc[amounts_conc < 0].sum())
+                mc1, mc2, mc3 = st.columns(3)
+                mc1.metric("✅ Conciliado — Gastos CLP",  f"${gastos_conc:,.0f}")
+                mc2.metric("✅ Conciliado — Abonos CLP",  f"${abs(abonos_conc):,.0f}")
+                mc3.metric("✅ Conciliado — Neto CLP",    f"${total_conc:,.0f}")
+
         # Selection for "Mover a Kame"
         selected = edited[edited["FACT_KAME"] == True].copy()
         all_ready = (
