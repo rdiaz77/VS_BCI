@@ -384,22 +384,25 @@ def render_transactions_page(conn, origen: str) -> None:
         )
 
         # ── Conciliado sum (shown top-right, above the table) ─
-        if not is_intl:
-            conc_rows = edited[edited["CONCILIADO"] == True]
-            if not conc_rows.empty:
-                rids_conc = conc_rows["_RID_"].tolist()
-                amounts_conc = pending.loc[pending["_RID_"].isin(rids_conc), monto_col]
-                gastos_conc = float(amounts_conc[amounts_conc > 0].sum())
-                abonos_conc = float(amounts_conc[amounts_conc < 0].sum())
-                neto_conc   = float(amounts_conc.sum())
-                _conc_placeholder.markdown(
-                    f"<div style='text-align:right;font-size:0.8rem;line-height:1.6'>"
-                    f"✅ <b>Gastos:</b> ${gastos_conc:,.0f} CLP &nbsp;|&nbsp;"
-                    f"<b>Abonos:</b> ${abs(abonos_conc):,.0f} CLP &nbsp;|&nbsp;"
-                    f"<b>Neto:</b> ${neto_conc:,.0f} CLP"
-                    f"</div>",
-                    unsafe_allow_html=True,
-                )
+        conc_rows = edited[edited["CONCILIADO"] == True]
+        if not conc_rows.empty:
+            rids_conc    = conc_rows["_RID_"].tolist()
+            amounts_conc = pending.loc[pending["_RID_"].isin(rids_conc), monto_col]
+            gastos_conc  = float(amounts_conc[amounts_conc > 0].sum())
+            abonos_conc  = float(amounts_conc[amounts_conc < 0].sum())
+            neto_conc    = float(amounts_conc.sum())
+            if is_intl:
+                fmt = lambda v: f"${v:,.2f} US$"
+            else:
+                fmt = lambda v: f"${v:,.0f} CLP"
+            _conc_placeholder.markdown(
+                f"<div style='text-align:right;font-size:0.8rem;line-height:1.6'>"
+                f"✅ <b>Gastos:</b> {fmt(gastos_conc)} &nbsp;|&nbsp;"
+                f"<b>Abonos:</b> {fmt(abs(abonos_conc))} &nbsp;|&nbsp;"
+                f"<b>Neto:</b> {fmt(neto_conc)}"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
 
         # Selection for "Mover a Kame"
         selected = edited[edited["FACT_KAME"] == True].copy()
