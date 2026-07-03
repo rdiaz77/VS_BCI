@@ -124,19 +124,7 @@ def show_dashboard(df_db: pd.DataFrame, conn=None) -> None:
         st.warning("No hay transacciones con esos filtros.")
         return
 
-    is_intl_only = origen_sel == "INTERNACIONAL"
-    monto_col = "MONTO_OPERACION" if is_intl_only else "MONTO_TOTAL"
-    cur = "US$" if is_intl_only else "CLP"
-
-    # ── KPIs ──────────────────────────────────────────────────
-    # Exclude payments (negative amounts) from totals — they are TC payments, not expenses
-    df_gastos = df[df[monto_col] > 0]
-    total = float(df_gastos[monto_col].sum())
-    count = int(len(df_gastos))
-    avg   = float(df_gastos[monto_col].mean()) if count else 0.0
-    conc  = int((df_gastos.get("CONCILIADO", 0) == 1).sum())
-    kame  = int((df_gastos.get("FACT_KAME",  0) == 1).sum())
-
+    # ── KPIs — separated by currency ──────────────────────────
     # File counts from estados_cuenta (unaffected by transaction filters)
     n_nac  = n_intl = 0
     if conn is not None:
@@ -146,37 +134,44 @@ def show_dashboard(df_db: pd.DataFrame, conn=None) -> None:
         n_nac  = int((ec_all["ORIGEN"] == "NACIONAL").sum())
         n_intl = int((ec_all["ORIGEN"] == "INTERNACIONAL").sum())
 
-    r1c1, r1c2, r1c3, r1c4, r1c5 = st.columns(5)
-    r1c1.metric(f"Total ({cur})",    f"${total:,.2f}" if is_intl_only else f"${total:,.0f}")
-    r1c2.metric("Transacciones",     str(count))
-    r1c3.metric(f"Promedio ({cur})", f"${avg:,.2f}"   if is_intl_only else f"${avg:,.0f}")
-    r1c4.metric("Conciliadas",       f"{conc}/{count}")
-    r1c5.metric("En Kame",           f"{kame}/{count}")
+    def _kpis(label: str, subset: pd.DataFrame, monto_col: str, fmt_fn) -> None:
+        gastos = subset[subset[monto_col] > 0]
+        pagos  = subset[subset[monto_col] < 0]
+        desc   = subset["DESCRIPCION"].str.upper()
+        total  = float(gastos[monto_col].sum())
+        count  = int(len(gastos))
+        avg    = float(gastos[monto_col].mean()) if count else 0.0
+        conc   = int((gastos.get("CONCILIADO", 0) == 1).sum())
+        kame   = int((gastos.get("FACT_KAME",  0) == 1).sum())
+        pagado = float(pagos[monto_col].sum())
 
-    desc = df["DESCRIPCION"].str.upper()
+        st.markdown(f"**{label}**")
+        c1, c2, c3, c4, c5, c6 = st.columns(6)
+        c1.metric("Total",         fmt_fn(total))
+        c2.metric("Transacciones", str(count))
+        c3.metric("Promedio",      fmt_fn(avg))
+        c4.metric("Conciliadas",   f"{conc}/{count}")
+        c5.metric("En Kame",       f"{kame}/{count}")
+        c6.metric("Pagado TC",     fmt_fn(abs(pagado)))
 
-    df_pagos      = df[df[monto_col] < 0]
-    df_comisiones = df_gastos[desc.str.contains("COMISION", na=False)]
-    df_intereses  = df_gastos[desc.str.contains("INTERES", na=False)]
-    df_impuestos  = df_gastos[desc.str.contains("IMPUESTO", na=False)]
+    df_nac  = df[df["ORIGEN"] == "NACIONAL"]
+    df_intl = df[df["ORIGEN"] == "INTERNACIONAL"]
 
-    total_pagado    = float(df_pagos[monto_col].sum())
-    total_comision  = float(df_comisiones[monto_col].sum())
-    total_interes   = float(df_intereses[monto_col].sum())
-    total_impuesto  = float(df_impuestos[monto_col].sum())
+    if not df_nac.empty:
+        _kpis("🇨🇱 Nacional (CLP)", df_nac,  "MONTO_TOTAL",     lambda v: f"${v:,.0f}")
+        st.markdown("")
+    if not df_intl.empty:
+        _kpis("🌎 Internacional (US$)", df_intl, "MONTO_OPERACION", lambda v: f"${v:,.2f}")
+        st.markdown("")
+
+    # Keep these for chart/table sections below
+    is_intl_only = origen_sel == "INTERNACIONAL"
+    monto_col = "MONTO_OPERACION" if is_intl_only else "MONTO_TOTAL"
+    cur = "US$" if is_intl_only else "CLP"
+    df_gastos = df[df[monto_col] > 0]
 
     def _fmt(v):
         return f"${v:,.2f}" if is_intl_only else f"${v:,.0f}"
-
-    r2c1, r2c2, r2c3, _ = st.columns([1, 1, 1, 2])
-    r2c1.metric("Archivos Nacional",      str(n_nac))
-    r2c2.metric("Archivos Internacional", str(n_intl))
-    r2c3.metric("Total pagado TC",        _fmt(abs(total_pagado)))
-
-    r3c1, r3c2, r3c3, _ = st.columns([1, 1, 1, 2])
-    r3c1.metric("Comisiones",  _fmt(total_comision))
-    r3c2.metric("Intereses",   _fmt(total_interes))
-    r3c3.metric("Impuestos",   _fmt(total_impuesto))
 
     st.markdown("---")
 
