@@ -50,7 +50,7 @@ TIPO_GASTO_OPTIONS_NAC = [
 
 TIPO_GASTO_OPTIONS_INTL = [
     "Airbnb", "Canva", "Food", "Google", "GSuite",
-    "Hotel", "Huber", "Hubspot", "Shutterstock", "Taxi", "Ticket Fare", "Trp a Deuda Nacional", "VEED", "Yachay",
+    "Hotel", "Huber", "Hubspot", "Microsoft", "Shutterstock", "Software", "Taxi", "Ticket Fare", "Trp a Deuda Nacional", "VEED", "Yachay",
 ]
 
 # ============================================================
