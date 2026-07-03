@@ -324,9 +324,13 @@ def render_transactions_page(conn, origen: str) -> None:
         if is_intl:
             pending["TRASPASADO"] = pending["TRASPASADO"].astype(bool)
 
-        show_all = st.checkbox(
-            "Mostrar todas las filas pendientes", value=False, key=f"all_{origen}"
-        )
+        _chk_col, _sum_col = st.columns([1, 2])
+        with _chk_col:
+            show_all = st.checkbox(
+                "Mostrar todas las filas pendientes", value=False, key=f"all_{origen}"
+            )
+        _conc_placeholder = _sum_col.empty()
+
         view = pending[display_cols].head(None if show_all else 20).copy()
 
         # Pre-format the amount column as string so thousands separator is guaranteed.
@@ -379,19 +383,23 @@ def render_transactions_page(conn, origen: str) -> None:
             key=f"editor_{origen}",
         )
 
-        # ── Conciliado sum ────────────────────────────────────
+        # ── Conciliado sum (shown top-right, above the table) ─
         if not is_intl:
             conc_rows = edited[edited["CONCILIADO"] == True]
             if not conc_rows.empty:
                 rids_conc = conc_rows["_RID_"].tolist()
                 amounts_conc = pending.loc[pending["_RID_"].isin(rids_conc), monto_col]
-                total_conc = float(amounts_conc.sum())
                 gastos_conc = float(amounts_conc[amounts_conc > 0].sum())
                 abonos_conc = float(amounts_conc[amounts_conc < 0].sum())
-                mc1, mc2, mc3 = st.columns(3)
-                mc1.metric("✅ Conciliado — Gastos CLP",  f"${gastos_conc:,.0f}")
-                mc2.metric("✅ Conciliado — Abonos CLP",  f"${abs(abonos_conc):,.0f}")
-                mc3.metric("✅ Conciliado — Neto CLP",    f"${total_conc:,.0f}")
+                neto_conc   = float(amounts_conc.sum())
+                _conc_placeholder.markdown(
+                    f"<div style='text-align:right;font-size:0.8rem;line-height:1.6'>"
+                    f"✅ <b>Gastos:</b> ${gastos_conc:,.0f} CLP &nbsp;|&nbsp;"
+                    f"<b>Abonos:</b> ${abs(abonos_conc):,.0f} CLP &nbsp;|&nbsp;"
+                    f"<b>Neto:</b> ${neto_conc:,.0f} CLP"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
 
         # Selection for "Mover a Kame"
         selected = edited[edited["FACT_KAME"] == True].copy()
