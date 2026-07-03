@@ -51,12 +51,16 @@ def show_archivos(conn) -> None:
             archivo = row["ARCHIVO"]
             key_confirm = f"confirm_del_{archivo}"
 
+            total_tx = int(row["TRANSACCIONES"])
+            conc_tx  = int(row["CONCILIADAS"])
+            dot = "🟢" if total_tx > 0 and conc_tx == total_tx else "🔴"
+
             c1, c2, c3, c4, c5, c6, c7 = st.columns([2, 2, 2, 2, 2, 1, 1])
             c1.write(row["FECHA_ESTADO"])
             c2.write(row["TITULAR"])
             c3.write(f"{row['DEUDA_TOTAL']} {row['MONEDA']}")
             c4.write(row["TRASPASO_ESTADO"])
-            c5.write(f"{int(row['TRANSACCIONES'])} transacciones")
+            c5.write(f"{dot} {conc_tx}/{total_tx} conciliadas")
 
             if st.session_state.get(key_confirm):
                 with c6:

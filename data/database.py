@@ -554,7 +554,9 @@ def fetch_archivos_resumen(conn) -> Tuple[List[str], List[tuple]]:
                 ec.MONEDA           AS moneda,
                 ec.TRASPASO_ESTADO  AS traspaso_estado,
                 (SELECT COUNT(*) FROM transacciones t
-                 WHERE t.ARCHIVO_ORIGEN = ec.ARCHIVO_ORIGEN) AS transacciones
+                 WHERE t.ARCHIVO_ORIGEN = ec.ARCHIVO_ORIGEN) AS transacciones,
+                (SELECT COUNT(*) FROM transacciones t
+                 WHERE t.ARCHIVO_ORIGEN = ec.ARCHIVO_ORIGEN AND t.CONCILIADO = 1) AS conciliadas
             FROM estados_cuenta ec
             ORDER BY
                 substring(ec.FECHA_ESTADO,7,4)||substring(ec.FECHA_ESTADO,4,2)||substring(ec.FECHA_ESTADO,1,2) DESC
