@@ -447,8 +447,8 @@ def render_transactions_page(conn, origen: str) -> None:
     if done.empty:
         st.info("Aún no hay transacciones ingresadas.")
     else:
-        # Show same columns minus _RID_ and FACT_KAME, plus ARCHIVO_ORIGEN
-        view_done = [c for c in display_cols if c not in ("_RID_", "FACT_KAME")] + ["ARCHIVO_ORIGEN"]
+        from data.database import delete_transacciones
+        view_done = ["_RID_"] + [c for c in display_cols if c not in ("_RID_", "FACT_KAME")] + ["ARCHIVO_ORIGEN"]
         view_done = [c for c in view_done if c in done.columns]
         done["_FECHA_DT"] = pd.to_datetime(done["FECHA_OPERACION"], format="%m/%d/%y", errors="coerce")
         done_view = done.sort_values("_FECHA_DT")[view_done].copy()
@@ -456,12 +456,29 @@ def render_transactions_page(conn, origen: str) -> None:
             done_view["MONTO_CLP"] = done_view["MONTO_CLP"].apply(
                 lambda v: f"{int(v):,}" if pd.notna(v) else "—"
             )
-        st.dataframe(
+        done_view["_ELIMINAR_"] = False
+        col_cfg_done = {
+            "_RID_":      st.column_config.NumberColumn("ID", disabled=True),
+            "_ELIMINAR_": st.column_config.CheckboxColumn("Eliminar"),
+        }
+        if is_intl:
+            col_cfg_done["MONTO_CLP"] = st.column_config.TextColumn("Costo (CLP)")
+        edited_done = st.data_editor(
             done_view,
             use_container_width=True,
             hide_index=True,
-            column_config={"MONTO_CLP": st.column_config.TextColumn("Costo (CLP)")} if is_intl else None,
+            column_config=col_cfg_done,
+            key=f"done_editor_{origen}",
         )
+        to_delete = edited_done[edited_done["_ELIMINAR_"] == True]
+        if not to_delete.empty:
+            if st.button(f"🗑️ Eliminar {len(to_delete)} fila(s) seleccionada(s)", key=f"del_done_{origen}", type="primary"):
+                try:
+                    delete_transacciones(conn, to_delete["_RID_"].astype(int).tolist())
+                    st.success(f"{len(to_delete)} transacción(es) eliminada(s).")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error al eliminar: {e}")
 
 
 # ============================================================

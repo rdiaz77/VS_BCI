@@ -588,6 +588,18 @@ def fetch_archivos_resumen(conn) -> Tuple[List[str], List[tuple]]:
 # Admin
 # ---------------------------------------------------------------------------
 
+def delete_transacciones(conn, rids: list) -> None:
+    """Permanently delete specific transactions by _RID_."""
+    if not rids:
+        return
+    with conn.cursor() as cur:
+        cur.execute(
+            f"DELETE FROM transacciones WHERE id = ANY(%s)",
+            (rids,),
+        )
+    conn.commit()
+
+
 def delete_estado_cuenta(conn, archivo_origen: str) -> None:
     """Delete a statement and all its transactions + dedup record.
     Raises ValueError if any transaction is already conciliada."""
