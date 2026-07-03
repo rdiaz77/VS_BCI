@@ -25,22 +25,22 @@ def show_archivos(conn) -> None:
 
     df = pd.DataFrame(rows, columns=cols)
 
-    # Sort by fecha_estado (DD-MM-YYYY) chronologically
-    df["_fecha_dt"] = pd.to_datetime(df["fecha_estado"], format="%d-%m-%Y", errors="coerce")
+    # Sort by FECHA_ESTADO (DD-MM-YYYY) chronologically
+    df["_fecha_dt"] = pd.to_datetime(df["FECHA_ESTADO"], format="%d-%m-%Y", errors="coerce")
     df = df.sort_values("_fecha_dt", ascending=False).drop(columns=["_fecha_dt"])
 
     # Friendly column names
     rename = {
-        "origen":          "Origen",
-        "titular":         "Titular",
-        "archivo":         "Archivo",
-        "fecha_estado":    "Fecha estado",
-        "periodo_desde":   "Período desde",
-        "periodo_hasta":   "Período hasta",
-        "deuda_total":     "Deuda total",
-        "moneda":          "Moneda",
-        "traspaso_estado": "Traspaso",
-        "transacciones":   "Transacciones",
+        "ORIGEN":          "Origen",
+        "TITULAR":         "Titular",
+        "ARCHIVO":         "Archivo",
+        "FECHA_ESTADO":    "Fecha estado",
+        "PERIODO_DESDE":   "Período desde",
+        "PERIODO_HASTA":   "Período hasta",
+        "DEUDA_TOTAL":     "Deuda total",
+        "MONEDA":          "Moneda",
+        "TRASPASO_ESTADO": "Traspaso",
+        "TRANSACCIONES":   "Transacciones",
     }
     df = df.rename(columns=rename)
 
