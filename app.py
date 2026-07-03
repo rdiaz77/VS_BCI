@@ -326,14 +326,9 @@ def render_transactions_page(conn, origen: str) -> None:
         if is_intl:
             pending["TRASPASADO"] = pending["TRASPASADO"].astype(bool)
 
-        _chk_col, _sum_col = st.columns([1, 2])
-        with _chk_col:
-            show_all = st.checkbox(
-                "Mostrar todas las filas pendientes", value=False, key=f"all_{origen}"
-            )
-        _conc_placeholder = _sum_col.empty()
+        _conc_placeholder = st.empty()
 
-        view = pending[display_cols].head(None if show_all else 20).copy()
+        view = pending[display_cols].copy()
 
         # Pre-format the amount column as string so thousands separator is guaranteed.
         # The column is disabled (read-only) so storing it as text doesn't affect saves.
@@ -381,6 +376,7 @@ def render_transactions_page(conn, origen: str) -> None:
             view,
             use_container_width=True,
             hide_index=True,
+            height=600,
             column_config=col_cfg,
             key=f"editor_{origen}",
         )
