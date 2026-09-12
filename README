@@ -1,67 +1,111 @@
 # Cartolas TCT BCI
 
-Streamlit app for ingesting, classifying, and reconciling BCI credit card statements (Nacional CLP + Internacional USD).
+Streamlit app for ingesting, classifying and reconciling BCI credit-card
+statements (Nacional CLP + Internacional USD) across multiple cards and years.
 
 ## Features
 
-- Upload BCI PDF statements (national and international)
-- Auto-extract transactions with pdfplumber
-- Auto-categorize by description (static rules + learned history)
-- Reconcile international DEUDA TOTAL to national TRASPASO line to compute bank exchange rate
-- Back-fill MONTO_CLP on every international transaction
-- Conciliación + Kame ERP tracking (FACT_KAME flag)
-- Dashboard with spend-by-category chart and uploaded-files summary
-- Password protection via Streamlit secrets
+- Drag in **many statements at once** — each PDF is routed to the national or
+  international parser automatically by reading its header, so a mixed batch
+  of cards and months works from either tab
+- Statements are identified by **card last-4 + statement date + type**, not by
+  filename: renaming a PDF will not sneak a duplicate in, and two different
+  cards billed on the same day stay separate
+- Auto-categorise by description (static rules + learned history, scoped per
+  statement type)
+- Reconcile the international DEUDA TOTAL to the national TRASPASO line to
+  derive the bank's exchange rate, then back-fill MONTO_CLP
+- Conciliación + Kame ERP tracking, with a running total of the ticked rows
+- Dashboard with per-currency KPIs, spend-by-category and an uploaded-files
+  table with per-statement delete
+- Filter the archive by card, date range and description
 
 ## Project structure
 
 ```
 app.py                          Main Streamlit app
-dashboard.py                    Dashboard + archivos table
+dashboard.py                    Dashboard + uploaded-statements table
+migrate.py                      One-shot, idempotent schema migration
 data/
-  database.py                   PostgreSQL layer (Neon via psycopg2)
+  database.py                   PostgreSQL layer (Neon), connection pool
+  common.py                     Shared statement-header parsing
+  categorias.py                 Allowed TIPO_GASTO values per statement type
   extractor_nacional.py         BCI national PDF parser (CLP)
   extractor_internacional.py    BCI international PDF parser (USD)
+tests/
+  test_parsers.py               Pure-function tests (no DB, no PDFs)
+  test_pdfs.py                  End-to-end parser tests (skip without PDFs)
 .streamlit/
   config.toml                   Server settings (committed)
-  secrets.toml                  Passwords (gitignored — see secrets.toml.example)
-  secrets.toml.example          Template for secrets
-requirements.txt
+  secrets.toml                  Passwords (gitignored — see the .example)
+requirements.txt / requirements-dev.txt
 runtime.txt
 ```
+
+## Data model notes
+
+- **Money is `NUMERIC`, never a float.** `real` holds only ~7 significant
+  digits, which silently rounds CLP amounts; `migrate.py` converts existing
+  columns via `::text::numeric` because PostgreSQL's direct `real -> numeric`
+  cast itself truncates to 6 digits.
+- **Dates are stored twice**: the bank's original text (`FECHA_OPERACION`,
+  `MM/DD/YY`) for display, and a real `DATE` column (`FECHA_OPERACION_D`) for
+  sorting and range filters.
+- **Classification propagation only fills blanks** and never crosses between
+  NACIONAL and INTERNACIONAL, whose category vocabularies differ.
 
 ## Local setup
 
 ```bash
 python -m venv venv
 source venv/bin/activate
-pip install -r requirements.txt
+pip install -r requirements-dev.txt
 
 cp .streamlit/secrets.toml.example .streamlit/secrets.toml
-# edit secrets.toml and set app_password
+# edit secrets.toml: app_password + supabase_db_url
+
+python migrate.py --dry-run   # review
+python migrate.py             # apply
 
 streamlit run app.py
 ```
 
+## Tests
+
+```bash
+pytest tests/ -q
+```
+
+`tests/test_pdfs.py` runs against any statements it finds in `Cartolas/` or
+`~/Desktop/Bci`, or in `$BCI_PDF_DIR`. Statements are gitignored, so those
+tests skip on a fresh clone.
+
 ## Streamlit Cloud deployment
 
 1. Push this repo to GitHub.
-2. Connect on share.streamlit.io and point to app.py.
+2. Connect on share.streamlit.io and point to `app.py`.
 3. Under Settings > Secrets, add:
    ```toml
    app_password = "your-password"
    supabase_db_url = "postgresql://user:password@host/dbname?sslmode=require"
    ```
-4. Data is stored in Neon PostgreSQL and persists across redeployments.
+4. Run `migrate.py` once against the same database before first deploy.
+5. Data lives in Neon PostgreSQL and persists across redeployments.
+
+`runtime.txt` pins Python 3.12; `requirements.txt` uses lower bounds that also
+work on 3.13, so the local venv and the deploy can differ safely.
 
 ## Exchange-rate reconciliation
 
-The international DEUDA TOTAL (USD) is transferred to the national statement as a single
-TRASPASO DEUDA INTERNACIONAL (CLP) line the following month. The app:
+The international DEUDA TOTAL (USD) is transferred to the national statement as
+a single TRASPASO DEUDA INTERNACIONAL (CLP) line the following month. The app:
 
-1. Finds the international credit line whose |USD| equals a statement DEUDA TOTAL.
-2. Matches it to the national CLP line on the same date.
-3. Computes tasa = CLP / USD and back-fills MONTO_CLP for every transaction in that statement.
+1. Finds the international credit line whose |USD| equals a statement's DEUDA
+   TOTAL (exact match — the amounts are `NUMERIC`).
+2. Matches it to the national CLP line on the same date, requiring the card to
+   agree when both are known.
+3. Computes tasa = CLP / USD and back-fills MONTO_CLP for every transaction in
+   that statement.
 
 Matching is automatic when unambiguous; a manual dropdown is shown otherwise.
-A sanity check flags any resulting rate outside 800-1100 CLP/US$.
+A sanity check flags any resulting rate outside 800–1100 CLP/US$.

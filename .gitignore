@@ -31,3 +31,6 @@ procesados.txt
 Cartolas/
 cartolas/
 *.pdf
+
+# --- Tests / tooling ---
+.pytest_cache/

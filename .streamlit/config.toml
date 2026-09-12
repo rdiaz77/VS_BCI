@@ -1,6 +1,7 @@
 [server]
 headless = true
-enableCORS = false
+# enableCORS intentionally left at its default: forcing it false while
+# enableXsrfProtection is true makes Streamlit warn and re-enable it anyway.
 enableXsrfProtection = true
 maxUploadSize = 20        # MB — BCI PDFs are well under 5 MB
 

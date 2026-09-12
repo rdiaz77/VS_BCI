@@ -7,6 +7,8 @@ from typing import Any, Dict, List, Optional, Tuple
 import pdfplumber
 from unidecode import unidecode
 
+from .common import build_archivo_origen, extraer_identidad
+
 # ============================================================
 # Parser for BCI "Estado de Cuenta Internacional" (USD).
 # International transactions stay in USD; the whole statement
@@ -40,19 +42,7 @@ def _ddmmyy_to_mmddyy(ddmmyy: str) -> str:
 # Header extraction
 # =========================
 def _extract_header_fields(full_text: str) -> Dict[str, Any]:
-    titular_first = None
-    m = re.search(
-        r"NOMBRE DEL TITULAR\s+(.+?)\s+N°\s*DE\s*TARJETA", full_text, re.DOTALL | re.IGNORECASE
-    )
-    if m:
-        nombre = " ".join(m.group(1).split()).strip()
-        if nombre:
-            titular_first = nombre.split()[0].title()
-
-    fecha_estado = None
-    m = re.search(r"FECHA ESTADO DE CUENTA\s+(\d{2}/\d{2}/\d{4})", full_text)
-    if m:
-        fecha_estado = m.group(1).replace("/", "-")
+    ident = extraer_identidad(full_text)
 
     periodo_desde = periodo_hasta = None
     m = re.search(r"PER[IÍ]ODO FACTURADO DESDE\s+(\d{2}/\d{2}/\d{4})", full_text, re.IGNORECASE)
@@ -70,19 +60,14 @@ def _extract_header_fields(full_text: str) -> Dict[str, Any]:
         except Exception:
             deuda_total = None
 
-    return {
-        "TITULAR_NOMBRE": titular_first,
-        "FECHA_ESTADO": fecha_estado,
-        "PERIODO_DESDE": periodo_desde,
-        "PERIODO_HASTA": periodo_hasta,
-        "DEUDA_TOTAL": deuda_total,
-    }
-
-
-def _build_archivo_origen(filename: str, titular: Optional[str], fecha_estado: Optional[str]) -> str:
-    if titular and fecha_estado:
-        return f"BCI_INT_{titular.replace(' ', '_')}_{fecha_estado}"
-    return filename
+    ident.update(
+        {
+            "PERIODO_DESDE": periodo_desde,
+            "PERIODO_HASTA": periodo_hasta,
+            "DEUDA_TOTAL": deuda_total,
+        }
+    )
+    return ident
 
 
 def _find_trailing_amounts(tokens: List[str]) -> List[str]:
@@ -122,7 +107,10 @@ def _split_desc_city_pais(tokens_after_date: List[str], pais: str) -> Tuple[str,
 
 
 def _parse_transaction_line(
-    line: str, archivo_origen: str, titular_first_name: Optional[str]
+    line: str,
+    archivo_origen: str,
+    titular_first_name: Optional[str],
+    ult4: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
     tokens = line.split()
     try:
@@ -162,6 +150,7 @@ def _parse_transaction_line(
     return {
         "ORIGEN": "INTERNACIONAL",
         "TITULAR_NOMBRE": titular_first_name,
+        "TARJETA_ULT4": ult4,
         "FECHA_OPERACION": _ddmmyy_to_mmddyy(tokens[date_idx]),
         "DESCRIPCION": desc,
         "CIUDAD": ciudad,
@@ -190,7 +179,10 @@ def leer_cartola_internacional(
 
         header = _extract_header_fields(full_text)
         titular_first = header["TITULAR_NOMBRE"]
-        archivo_origen = _build_archivo_origen(filename, titular_first, header["FECHA_ESTADO"])
+        ult4 = header["TARJETA_ULT4"]
+        archivo_origen = build_archivo_origen(
+            "BCI_INT", ult4, titular_first, header["FECHA_ESTADO"], filename
+        )
 
         in_transacciones = False
         in_comisiones = False
@@ -223,23 +215,22 @@ def leer_cartola_internacional(
                 if not DATE_RE.search(line):
                     continue
 
-                row = _parse_transaction_line(line, archivo_origen, titular_first)
+                row = _parse_transaction_line(
+                    line, archivo_origen, titular_first, ult4
+                )
                 if row:
                     rows.append(row)
 
-    # Deduplicate
-    uniq = {}
-    for r in rows:
-        key = (
-            r["TITULAR_NOMBRE"], r["FECHA_OPERACION"], r["DESCRIPCION"],
-            r.get("PAIS", ""), r["MONTO_OPERACION"], r["ARCHIVO_ORIGEN"],
-        )
-        uniq[key] = r
-    rows = list(uniq.values())
+    # No content-based deduplication here: two identical charges on the same
+    # day (same merchant, same amount) are a real and common pattern, and
+    # collapsing them silently under-reports the statement. The section gating
+    # above already prevents the same physical line being read twice.
 
     meta = {
         "ORIGEN": "INTERNACIONAL",
         "TITULAR_NOMBRE": titular_first,
+        "TITULAR_COMPLETO": header["TITULAR_COMPLETO"],
+        "TARJETA_ULT4": ult4,
         "ARCHIVO_ORIGEN": archivo_origen,
         "FECHA_ESTADO": header["FECHA_ESTADO"],
         "PERIODO_DESDE": header["PERIODO_DESDE"],

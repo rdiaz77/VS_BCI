@@ -1,9 +1,12 @@
-streamlit==1.38.0
-pandas==2.2.2
-pdfplumber==0.11.0
-pdfminer.six==20231228
-Pillow==10.2.0
-plotly==6.3.1
-Unidecode==1.4.0
-python-dateutil==2.9.0
-psycopg2-binary==2.9.9
+# Lower bounds, not exact pins: the previously pinned pandas==2.2.2,
+# Pillow==10.2.0 and psycopg2-binary==2.9.9 have no wheels for Python 3.13 and
+# fail to build there. These floors work on both 3.12 and 3.13.
+streamlit>=1.38.0
+pandas>=2.2.3
+pdfplumber>=0.11.0
+pdfminer.six>=20231228
+Pillow>=10.4.0
+plotly>=6.0.0
+Unidecode>=1.4.0
+python-dateutil>=2.9.0
+psycopg2-binary>=2.9.10

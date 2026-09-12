@@ -6,6 +6,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import pdfplumber
 
+from .common import build_archivo_origen, extraer_identidad
+
 # ============================================================
 # Parser for BCI "Estado de Cuenta Nacional" (CLP).
 # Transaction line shape (after the "2. PERIODO ACTUAL" header):
@@ -21,14 +23,6 @@ LINE_RE = re.compile(
     r"\$\s*(?P<m2>-?\d{1,3}(?:\.\d{3})*)"
 )
 
-TITULAR_RE = re.compile(
-    r"NOMBRE DEL TITULAR\s+(?P<nombre>.+?)\s+N°\s*DE\s*TARJETA",
-    re.IGNORECASE | re.DOTALL,
-)
-FECHA_ESTADO_RE = re.compile(
-    r"FECHA ESTADO DE CUENTA\s+(?P<fecha>\d{2}[-/]\d{2}[-/]\d{4})",
-    re.IGNORECASE,
-)
 PERIODO_RE = re.compile(
     r"PERIODO\s+FACTURADO\s+(?P<desde>\d{2}[-/]\d{2}[-/]\d{4})\s+(?P<hasta>\d{2}[-/]\d{2}[-/]\d{4})",
     re.IGNORECASE,
@@ -60,19 +54,9 @@ def _ddmmyy_to_mmddyy(ddmmyy: str) -> str:
         return ddmmyy
 
 
-def _extract_header(full_text: str) -> Tuple[Optional[str], Optional[str], Optional[str], Optional[str], Optional[float]]:
-    """Returns titular_first, fecha_estado, periodo_desde, periodo_hasta, deuda_total."""
-    titular_first = None
-    m = TITULAR_RE.search(full_text)
-    if m:
-        nombre = " ".join(m.group("nombre").split()).strip()
-        if nombre:
-            titular_first = nombre.split()[0].title()
-
-    fecha_estado = None
-    m = FECHA_ESTADO_RE.search(full_text)
-    if m:
-        fecha_estado = m.group("fecha").replace("/", "-")
+def _extract_header(full_text: str) -> Dict[str, Any]:
+    """Cardholder / card / dates / total for the statement."""
+    ident = extraer_identidad(full_text)
 
     periodo_desde = periodo_hasta = None
     m = PERIODO_RE.search(full_text)
@@ -85,15 +69,14 @@ def _extract_header(full_text: str) -> Tuple[Optional[str], Optional[str], Optio
     if m:
         deuda_total = normalizar_monto_clp(m.group("monto"))
 
-    return titular_first, fecha_estado, periodo_desde, periodo_hasta, (
-        float(deuda_total) if deuda_total is not None else None
+    ident.update(
+        {
+            "PERIODO_DESDE": periodo_desde,
+            "PERIODO_HASTA": periodo_hasta,
+            "DEUDA_TOTAL": float(deuda_total) if deuda_total is not None else None,
+        }
     )
-
-
-def _build_archivo_origen(filename: str, titular: Optional[str], fecha_estado: Optional[str]) -> str:
-    if titular and fecha_estado:
-        return f"BCI_NAC_{titular.replace(' ', '_')}_{fecha_estado}"
-    return filename
+    return ident
 
 
 def leer_cartola_nacional(
@@ -109,8 +92,12 @@ def leer_cartola_nacional(
         page_texts = [(p.extract_text() or "") for p in pdf.pages]
         full_text = "\n".join(page_texts)
 
-        titular, fecha_estado, p_desde, p_hasta, deuda = _extract_header(full_text)
-        archivo_origen = _build_archivo_origen(filename, titular, fecha_estado)
+        hdr = _extract_header(full_text)
+        titular = hdr["TITULAR_NOMBRE"]
+        ult4 = hdr["TARJETA_ULT4"]
+        archivo_origen = build_archivo_origen(
+            "BCI_NAC", ult4, titular, hdr["FECHA_ESTADO"], filename
+        )
 
         for text in page_texts:
             for raw in text.splitlines():
@@ -135,6 +122,7 @@ def leer_cartola_nacional(
                     {
                         "ORIGEN": "NACIONAL",
                         "TITULAR_NOMBRE": titular,
+                        "TARJETA_ULT4": ult4,
                         "FECHA_OPERACION": _ddmmyy_to_mmddyy(m.group("fecha")),
                         "DESCRIPCION": desc,
                         "CIUDAD": "",
@@ -155,11 +143,13 @@ def leer_cartola_nacional(
     meta = {
         "ORIGEN": "NACIONAL",
         "TITULAR_NOMBRE": titular,
+        "TITULAR_COMPLETO": hdr["TITULAR_COMPLETO"],
+        "TARJETA_ULT4": ult4,
         "ARCHIVO_ORIGEN": archivo_origen,
-        "FECHA_ESTADO": fecha_estado,
-        "PERIODO_DESDE": p_desde,
-        "PERIODO_HASTA": p_hasta,
-        "DEUDA_TOTAL": deuda,
+        "FECHA_ESTADO": hdr["FECHA_ESTADO"],
+        "PERIODO_DESDE": hdr["PERIODO_DESDE"],
+        "PERIODO_HASTA": hdr["PERIODO_HASTA"],
+        "DEUDA_TOTAL": hdr["DEUDA_TOTAL"],
         "MONEDA": "CLP",
     }
     return rows, meta
