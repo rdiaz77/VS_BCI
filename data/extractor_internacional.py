@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-import io
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
-import pdfplumber
 from unidecode import unidecode
 
-from .common import build_archivo_origen, extraer_identidad
+from .common import build_archivo_origen, dividir_en_cartolas, extraer_identidad
 
 # ============================================================
 # Parser for BCI "Estado de Cuenta Internacional" (USD).
@@ -165,61 +163,64 @@ def _parse_transaction_line(
         "FACT_KAME": 0,
         "TRASPASADO": 0,
         "ARCHIVO_ORIGEN": archivo_origen,
+        "CUOTA": "",  # international statements do not bill in installments
     }
 
 
-def leer_cartola_internacional(
-    pdf_bytes: bytes, filename: str = "archivo.pdf"
+def parse_internacional(
+    page_texts: List[str], filename: str = "archivo.pdf"
 ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    """Parse the pages of exactly one international statement.
+
+    Callers must pass the pages of a single statement — see
+    `common.dividir_en_cartolas`.
+    """
     rows: List[Dict[str, Any]] = []
+    full_text = "\n".join(page_texts)
 
-    with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
-        page_texts = [(p.extract_text() or "") for p in pdf.pages]
-        full_text = "\n".join(page_texts)
+    header = _extract_header_fields(full_text)
+    titular_first = header["TITULAR_NOMBRE"]
+    ult4 = header["TARJETA_ULT4"]
+    archivo_origen = build_archivo_origen(
+        "BCI_INT", ult4, titular_first, header["FECHA_ESTADO"], filename
+    )
 
-        header = _extract_header_fields(full_text)
-        titular_first = header["TITULAR_NOMBRE"]
-        ult4 = header["TARJETA_ULT4"]
-        archivo_origen = build_archivo_origen(
-            "BCI_INT", ult4, titular_first, header["FECHA_ESTADO"], filename
-        )
+    in_transacciones = False
+    in_comisiones = False
 
-        in_transacciones = False
-        in_comisiones = False
+    for t in page_texts:
+        for raw_line in t.splitlines():
+            line = " ".join(raw_line.split())
+            if not line:
+                continue
+            u = _norm(line)
 
-        for t in page_texts:
-            for raw_line in t.splitlines():
-                line = " ".join(raw_line.split())
-                if not line:
-                    continue
-                u = _norm(line)
+            if "2. INFORMACION DE TRANSACCIONES" in u:
+                in_transacciones = True
+                in_comisiones = False
+                continue
+            if "COMISIONES, OTROS CARGOS Y ABONOS" in u:
+                in_comisiones = True
+                in_transacciones = False
+                continue
+            if u.startswith("TOTAL TARJETA"):
+                in_transacciones = False
+                continue
+            if u.startswith(
+                ("NUMERO", "FECHA", "DESCRIPCION", "CIUDAD", "PAIS",
+                 "MONTO", "TOTAL DE PAGOS", "TOTAL DE COMPRAS")
+            ):
+                continue
+            if not (in_transacciones or in_comisiones):
+                continue
+            if not DATE_RE.search(line):
+                continue
 
-                if "2. INFORMACION DE TRANSACCIONES" in u:
-                    in_transacciones = True
-                    in_comisiones = False
-                    continue
-                if "COMISIONES, OTROS CARGOS Y ABONOS" in u:
-                    in_comisiones = True
-                    in_transacciones = False
-                    continue
-                if u.startswith("TOTAL TARJETA"):
-                    in_transacciones = False
-                    continue
-                if u.startswith(
-                    ("NUMERO", "FECHA", "DESCRIPCION", "CIUDAD", "PAIS",
-                     "MONTO", "TOTAL DE PAGOS", "TOTAL DE COMPRAS")
-                ):
-                    continue
-                if not (in_transacciones or in_comisiones):
-                    continue
-                if not DATE_RE.search(line):
-                    continue
-
-                row = _parse_transaction_line(
-                    line, archivo_origen, titular_first, ult4
-                )
-                if row:
-                    rows.append(row)
+            row = _parse_transaction_line(
+                line, archivo_origen, titular_first, ult4
+            )
+            if row:
+                rows.append(row)
 
     # No content-based deduplication here: two identical charges on the same
     # day (same merchant, same amount) are a real and common pattern, and
@@ -239,3 +240,13 @@ def leer_cartola_internacional(
         "MONEDA": "USD",
     }
     return rows, meta
+
+
+def leer_cartola_internacional(
+    pdf_bytes: bytes, filename: str = "archivo.pdf"
+) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    """Extract the first international statement in the PDF, with its metadata."""
+    for tipo, page_texts in dividir_en_cartolas(pdf_bytes):
+        if tipo == "INTERNACIONAL":
+            return parse_internacional(page_texts, filename)
+    return [], {}

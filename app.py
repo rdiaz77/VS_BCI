@@ -15,7 +15,7 @@ from data.categorias import (
     KAME_ACCOUNT_MAP,
     opciones as tipo_gasto_opciones,
 )
-from data.common import detectar_tipo_cartola, resumen_meta
+from data.common import resumen_meta
 from data.database import (
     auto_match_traspasos,
     auto_tipo_gasto,
@@ -41,8 +41,7 @@ from data.database import (
     reset_db,
     update_clasificacion,
 )
-from data.extractor_internacional import leer_cartola_internacional
-from data.extractor_nacional import leer_cartola_nacional
+from data.lector import leer_todas_las_cartolas
 from dashboard import show_dashboard
 
 st.set_page_config(page_title="Cartolas TCT BCI", layout="wide")
@@ -137,8 +136,15 @@ def _ingest(conn, uploaded, exclude_terms: list[str]) -> None:
 
     for f in uploaded:
         raw = f.read()
-        tipo = detectar_tipo_cartola(raw)
-        if tipo is None:
+        try:
+            cartolas = leer_todas_las_cartolas(raw, filename=f.name)
+        except Exception as e:
+            _log.exception("PDF extraction failed: %s", f.name)
+            st.error(f"❌ Error leyendo **{f.name}**: {e}")
+            failed += 1
+            continue
+
+        if not cartolas:
             st.error(
                 f"❌ **{f.name}** — no parece un estado de cuenta BCI "
                 "(no se encontró el título Nacional/Internacional)."
@@ -146,58 +152,55 @@ def _ingest(conn, uploaded, exclude_terms: list[str]) -> None:
             failed += 1
             continue
 
-        extractor = (
-            leer_cartola_internacional if tipo == "INTERNACIONAL" else leer_cartola_nacional
-        )
-        try:
-            rows, meta = extractor(raw, filename=f.name)
-        except Exception as e:
-            _log.exception("PDF extraction failed: %s", f.name)
-            st.error(f"❌ Error leyendo **{f.name}**: {e}")
-            failed += 1
-            continue
+        # A scanned archive holds many statements in one PDF; each is ingested
+        # on its own so already-loaded months are skipped individually.
+        if len(cartolas) > 1:
+            st.info(f"📑 **{f.name}** — {len(cartolas)} cartolas en el archivo.")
 
-        dup = estado_ya_procesado(conn, meta)
-        if dup:
-            st.warning(
-                f"⚠️ **{f.name}** — {resumen_meta(meta)} ya estaba cargado "
-                f"como `{dup['archivo']}` — omitido."
-            )
-            skipped += 1
-            continue
+        for rows, meta in cartolas:
+            tipo = meta["ORIGEN"]
 
-        if exclude_terms:
-            rows = [
-                r for r in rows
-                if not any(t in r.get("DESCRIPCION", "").lower() for t in exclude_terms)
-            ]
-
-        for r in rows:
-            if not r.get("TIPO_GASTO"):
-                r["TIPO_GASTO"] = auto_tipo_gasto(
-                    r.get("DESCRIPCION", ""), historic, origen=r.get("ORIGEN", "")
+            dup = estado_ya_procesado(conn, meta)
+            if dup:
+                st.warning(
+                    f"⚠️ {resumen_meta(meta)} ya estaba cargado "
+                    f"como `{dup['archivo']}` — omitido."
                 )
+                skipped += 1
+                continue
 
-        if not rows:
-            st.warning(f"⚠️ **{f.name}** — sin filas válidas. No se carga.")
-            skipped += 1
-            continue
+            if exclude_terms:
+                rows = [
+                    r for r in rows
+                    if not any(t in r.get("DESCRIPCION", "").lower() for t in exclude_terms)
+                ]
 
-        try:
-            n = ingest_statement(conn, rows, meta)
-        except Exception as e:
-            _log.exception("ingest failed: %s", f.name)
-            st.error(f"❌ Error guardando **{f.name}**: {e}")
-            failed += 1
-            continue
+            for r in rows:
+                if not r.get("TIPO_GASTO"):
+                    r["TIPO_GASTO"] = auto_tipo_gasto(
+                        r.get("DESCRIPCION", ""), historic, origen=r.get("ORIGEN", "")
+                    )
 
-        if n == 0:
-            st.warning(f"⚠️ **{f.name}** — {resumen_meta(meta)} ya existía — omitido.")
-            skipped += 1
-        else:
-            ingested += 1
-            por_origen[tipo] = por_origen.get(tipo, 0) + 1
-            st.success(f"✅ **{f.name}** → {resumen_meta(meta)} · {n} transacciones")
+            if not rows:
+                st.warning(f"⚠️ {resumen_meta(meta)} — sin filas válidas. No se carga.")
+                skipped += 1
+                continue
+
+            try:
+                n = ingest_statement(conn, rows, meta)
+            except Exception as e:
+                _log.exception("ingest failed: %s", meta.get("ARCHIVO_ORIGEN"))
+                st.error(f"❌ Error guardando {resumen_meta(meta)}: {e}")
+                failed += 1
+                continue
+
+            if n == 0:
+                st.warning(f"⚠️ {resumen_meta(meta)} ya existía — omitido.")
+                skipped += 1
+            else:
+                ingested += 1
+                por_origen[tipo] = por_origen.get(tipo, 0) + 1
+                st.success(f"✅ {resumen_meta(meta)} · {n} transacciones")
 
     if ingested:
         detalle = ", ".join(f"{n} {o.lower()}" for o, n in sorted(por_origen.items()))

@@ -110,6 +110,32 @@ def detectar_tipo_cartola(pdf_bytes: bytes) -> Optional[str]:
     return None
 
 
+def dividir_en_cartolas(pdf_bytes: bytes) -> list[tuple[str, list[str]]]:
+    """Split a PDF into one entry per statement it contains.
+
+    A scanned-and-merged archive holds dozens of statements in one file, and
+    both parsers read a header once and then sweep every page — so handing
+    them a merged file silently attributes two years of transactions to a
+    single month and re-imports statements already in the database.
+
+    Returns [(tipo, page_texts), ...] in document order; pages before the
+    first header are dropped.
+    """
+    with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+        page_texts = [(p.extract_text() or "") for p in pdf.pages]
+
+    cartolas: list[tuple[str, list[str]]] = []
+    for text in page_texts:
+        head = flatten(text).upper()
+        if "INTERNACIONAL DE TARJETA" in head:
+            cartolas.append(("INTERNACIONAL", [text]))
+        elif "NACIONAL DE TARJETA" in head:
+            cartolas.append(("NACIONAL", [text]))
+        elif cartolas:
+            cartolas[-1][1].append(text)
+    return cartolas
+
+
 def resumen_meta(meta: Dict[str, Any]) -> str:
     """Human label for a statement, e.g. 'Rafael ••4364 · 23-01-2026'."""
     card = f"••{meta['TARJETA_ULT4']}" if meta.get("TARJETA_ULT4") else "tarjeta ?"

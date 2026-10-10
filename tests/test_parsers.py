@@ -18,6 +18,7 @@ from data.extractor_nacional import (
     LINE_RE,
     _ddmmyy_to_mmddyy,
     normalizar_monto_clp,
+    parse_nacional,
 )
 
 HEADER = (
@@ -169,3 +170,56 @@ def test_cuota_negativa_de_un_pago_se_lee_completa():
     line = "08/01/26 080100343370 PAGO PAC EN PESOS $ -770.470 $ -770.470 01/01 $ -770.470"
     m = LINE_RE.search(line)
     assert normalizar_monto_clp(m.group("m_cuota")) == -770_470
+
+
+# ------------------------------------------------- cartolas unidas en un PDF
+# A scanned archive merges dozens of statements into one file. Parsing that as
+# a single statement attributes two years of transactions to the first header's
+# month and re-imports months already in the database — the bug that produced
+# 611 duplicated rows.
+def _pagina(origen: str, ult4: str, fecha: str) -> str:
+    return (
+        f"ESTADO DE CUENTA {origen} DE TARJETA DE CREDITO\n"
+        f"NOMBRE DEL TITULAR RAFAEL P. DIAZ\n"
+        f"N° DE TARJETA DE CRÉDITO XXXXXXXXXXXX{ult4}\n"
+        f"FECHA ESTADO DE CUENTA {fecha}"
+    )
+
+
+def test_parse_nacional_solo_ve_las_paginas_que_recibe():
+    pages = [_pagina("NACIONAL", "4364", "24/12/2024"),
+             "SANTIAGO 05/12/24 061210673806 FLOW E-CERTCHILE $ 29.738 $ 29.738"]
+    rows, meta = parse_nacional(pages, "x.pdf")
+    assert meta["FECHA_ESTADO"] == "24-12-2024"
+    assert [r["DESCRIPCION"] for r in rows] == ["FLOW E-CERTCHILE"]
+
+
+def test_cada_cartola_queda_con_su_propia_fecha_de_estado():
+    """Two statements in one file must not collapse into the first one's month."""
+    pages_a = [_pagina("NACIONAL", "4364", "24/12/2024"),
+               "SANTIAGO 05/12/24 061210673806 FLOW E-CERTCHILE $ 29.738 $ 29.738"]
+    pages_b = [_pagina("NACIONAL", "4364", "22/11/2024"),
+               "SANTIAGO 04/11/24 051111935564 ISAPRE ESENCIAL $ 272.348 $ 272.348"]
+
+    _, meta_a = parse_nacional(pages_a, "x.pdf")
+    _, meta_b = parse_nacional(pages_b, "x.pdf")
+    assert meta_a["ARCHIVO_ORIGEN"] != meta_b["ARCHIVO_ORIGEN"]
+
+
+def test_la_cuota_se_guarda_para_distinguir_mensualidades():
+    """Without it, the 12 installments of one purchase look like 12 duplicates."""
+    pages = [
+        _pagina("NACIONAL", "4364", "27/12/2022"),
+        "SANTIAGO 18/07/22 161210875225 MP *MERCADO LIB TASA INT. 0,00% "
+        "$ 419.000 $ 419.000 06/12 $ 34.916",
+    ]
+    rows, _ = parse_nacional(pages, "x.pdf")
+    assert rows[0]["CUOTA"] == "06/12"
+    assert rows[0]["MONTO_TOTAL"] == 34_916
+
+
+def test_linea_sin_cuota_guarda_cuota_vacia():
+    pages = [_pagina("NACIONAL", "4364", "24/12/2024"),
+             "SANTIAGO 05/12/24 061210673806 FLOW E-CERTCHILE $ 29.738 $ 29.738"]
+    rows, _ = parse_nacional(pages, "x.pdf")
+    assert rows[0]["CUOTA"] == ""

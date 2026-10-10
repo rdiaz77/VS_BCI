@@ -22,19 +22,19 @@ from pathlib import Path
 import pdfplumber
 from pdfminer.pdfdocument import PDFPasswordIncorrect
 
-from data.common import detectar_tipo_cartola, flatten
+from data.common import dividir_en_cartolas, flatten
 from data.extractor_internacional import (
     DATE_RE as INTL_DATE_RE,
     _norm,
     _parse_transaction_line,
     _to_float,
-    leer_cartola_internacional,
+    parse_internacional,
 )
 from data.extractor_nacional import (
     LINE_RE as NAC_LINE_RE,
     SKIP_PREFIXES,
-    leer_cartola_nacional,
     normalizar_monto_clp,
+    parse_nacional,
 )
 
 NAC_DATE_RE = re.compile(r"\b\d{2}/\d{2}/\d{2}\b")
@@ -197,10 +197,18 @@ def _compactar(valores: list[int]) -> str:
     return ", ".join(tramos)
 
 
-def _saldo_anterior(pdf_bytes: bytes, intl: bool):
-    """Prior-period balance carried into this statement, or None if absent."""
+def _saldo_anterior(pdf_bytes_or_pages, intl: bool):
+    """Prior-period balance carried into this statement, or None if absent.
+
+    Accepts the pages of one statement; passing whole PDF bytes reads the first
+    statement in the file, which is wrong for a merged archive.
+    """
     try:
-        flat = flatten("\n".join(_page_texts(pdf_bytes)))
+        if isinstance(pdf_bytes_or_pages, (bytes, bytearray)):
+            pages = _page_texts(bytes(pdf_bytes_or_pages))
+        else:
+            pages = list(pdf_bytes_or_pages)
+        flat = flatten("\n".join(pages))
     except Exception:
         return None
     m = (SALDO_ANT_INTL if intl else SALDO_ANT_NAC).search(flat)
@@ -219,10 +227,10 @@ def _page_texts(pdf_bytes: bytes) -> list[str]:
         return [(p.extract_text() or "") for p in pdf.pages]
 
 
-def _dropped_nacional(pdf_bytes: bytes) -> list[str]:
+def _dropped_nacional(pages: list[str]) -> list[str]:
     """Lines that look like CLP transactions but LINE_RE refused to match."""
     dropped = []
-    for text in _page_texts(pdf_bytes):
+    for text in pages:
         for raw in text.splitlines():
             line = " ".join(raw.split())
             if not line or line.upper().startswith(SKIP_PREFIXES):
@@ -233,11 +241,11 @@ def _dropped_nacional(pdf_bytes: bytes) -> list[str]:
     return dropped
 
 
-def _dropped_internacional(pdf_bytes: bytes) -> list[str]:
+def _dropped_internacional(pages: list[str]) -> list[str]:
     """Lines inside the transaction sections that the USD parser returned None for."""
     dropped = []
     in_tx = in_com = False
-    for text in _page_texts(pdf_bytes):
+    for text in pages:
         for raw in text.splitlines():
             line = " ".join(raw.split())
             if not line:
@@ -294,16 +302,21 @@ def validar(folder: Path, check_db: bool, filtros=None) -> list[dict]:
             results.append(row)
             continue
 
-        tipo = detectar_tipo_cartola(raw)
-        if tipo is None:
-            # Could be the wrong kind of document, or one we cannot open at all
-            # (BCI ships some statements encrypted). Tell those apart.
+        try:
+            cartolas = dividir_en_cartolas(raw)
+        except PDFPasswordIncorrect:
+            row["estado"] = "PROTEGIDO_CON_CLAVE"
+            results.append(row)
+            continue
+        except Exception as e:
+            row["estado"] = "ILEGIBLE"
+            row["detalle"] = f"{type(e).__name__}: {e}"
+            results.append(row)
+            continue
+
+        if not cartolas:
             try:
                 head = flatten((_page_texts(raw) or [""])[0])[:120]
-            except PDFPasswordIncorrect:
-                row["estado"] = "PROTEGIDO_CON_CLAVE"
-                results.append(row)
-                continue
             except Exception as e:
                 row["estado"] = "ILEGIBLE"
                 row["detalle"] = f"{type(e).__name__}: {e}"
@@ -314,79 +327,91 @@ def validar(folder: Path, check_db: bool, filtros=None) -> list[dict]:
             results.append(row)
             continue
 
-        row["tipo"] = tipo
-        extractor = (
-            leer_cartola_internacional if tipo == "INTERNACIONAL" else leer_cartola_nacional
-        )
-        try:
-            rows, meta = extractor(raw, filename=path.name)
-        except PDFPasswordIncorrect:
-            row["estado"] = "PROTEGIDO_CON_CLAVE"
-            results.append(row)
-            continue
-        except Exception as e:
-            row["estado"] = "ERROR_PARSEO"
-            row["detalle"] = f"{type(e).__name__}: {e}"
-            results.append(row)
-            continue
-
-        try:
-            dropped = (
-                _dropped_internacional(raw)
-                if tipo == "INTERNACIONAL"
-                else _dropped_nacional(raw)
+        # One file can hold many statements; report each on its own line.
+        for idx, (tipo, pages) in enumerate(cartolas):
+            sub = dict(row)
+            if len(cartolas) > 1:
+                sub["archivo"] = f"{row['archivo']} [{idx + 1}/{len(cartolas)}]"
+            _validar_una(
+                sub, tipo, pages, path.name, anios, meses, desde, hasta,
+                results, dup_check,
             )
-        except Exception:
-            dropped = []
-        if not en_periodo(meta.get("FECHA_ESTADO") or "", anios, meses, desde, hasta):
-            continue
 
-        intl = tipo == "INTERNACIONAL"
-        monto_col = "MONTO_OPERACION" if intl else "MONTO_TOTAL"
-        suma = sum((r[monto_col] or 0) for r in rows)
-        saldo_ant = _saldo_anterior(raw, intl)
+    return _marcar_claves_duplicadas(results)
 
-        deuda = meta.get("DEUDA_TOTAL")
-        descuadre = None
-        if deuda is not None and saldo_ant is not None:
-            descuadre = round(float(saldo_ant) + float(suma) - float(deuda), 2)
 
-        row.update({
-            "tarjeta": meta.get("TARJETA_ULT4") or "",
-            "fecha": meta.get("FECHA_ESTADO") or "",
-            "clave": meta.get("ARCHIVO_ORIGEN") or "",
-            "filas": len(rows),
-            "saldo_anterior": saldo_ant,
-            "suma_filas": round(float(suma), 2),
-            "deuda_total": deuda,
-            "descuadre": descuadre,
-            "lineas_perdidas": len(dropped),
-            "detalle": " || ".join(dropped[:3]),
-        })
-
-        problemas = []
-        if not meta.get("TARJETA_ULT4"):
-            problemas.append("SIN_TARJETA")
-        if not meta.get("FECHA_ESTADO"):
-            problemas.append("SIN_FECHA")
-        if not rows:
-            problemas.append("SIN_FILAS")
-        if dropped:
-            problemas.append("LINEAS_PERDIDAS")
-        if deuda is None:
-            problemas.append("SIN_DEUDA_TOTAL")
-        elif saldo_ant is None:
-            problemas.append("SIN_SALDO_ANTERIOR")
-        elif abs(descuadre) >= 0.5:
-            # The bank's own arithmetic does not close: rows were missed,
-            # double-counted, or valued wrong.
-            problemas.append(f"DESCUADRE({descuadre:,.0f})")
-        if dup_check and dup_check(meta):
-            problemas.append("YA_CARGADA")
-
-        row["estado"] = " + ".join(problemas) if problemas else "OK"
+def _validar_una(
+    row, tipo, pages, filename, anios, meses, desde, hasta, results, dup_check
+) -> None:
+    row["tipo"] = tipo
+    parse = parse_internacional if tipo == "INTERNACIONAL" else parse_nacional
+    try:
+        rows, meta = parse(pages, filename)
+    except Exception as e:
+        row["estado"] = "ERROR_PARSEO"
+        row["detalle"] = f"{type(e).__name__}: {e}"
         results.append(row)
+        return
 
+    try:
+        dropped = (
+            _dropped_internacional(pages)
+            if tipo == "INTERNACIONAL"
+            else _dropped_nacional(pages)
+        )
+    except Exception:
+        dropped = []
+    if not en_periodo(meta.get("FECHA_ESTADO") or "", anios, meses, desde, hasta):
+        return
+
+    intl = tipo == "INTERNACIONAL"
+    monto_col = "MONTO_OPERACION" if intl else "MONTO_TOTAL"
+    suma = sum((r[monto_col] or 0) for r in rows)
+    saldo_ant = _saldo_anterior(pages, intl)
+
+    deuda = meta.get("DEUDA_TOTAL")
+    descuadre = None
+    if deuda is not None and saldo_ant is not None:
+        descuadre = round(float(saldo_ant) + float(suma) - float(deuda), 2)
+
+    row.update({
+        "tarjeta": meta.get("TARJETA_ULT4") or "",
+        "fecha": meta.get("FECHA_ESTADO") or "",
+        "clave": meta.get("ARCHIVO_ORIGEN") or "",
+        "filas": len(rows),
+        "saldo_anterior": saldo_ant,
+        "suma_filas": round(float(suma), 2),
+        "deuda_total": deuda,
+        "descuadre": descuadre,
+        "lineas_perdidas": len(dropped),
+        "detalle": " || ".join(dropped[:3]),
+    })
+
+    problemas = []
+    if not meta.get("TARJETA_ULT4"):
+        problemas.append("SIN_TARJETA")
+    if not meta.get("FECHA_ESTADO"):
+        problemas.append("SIN_FECHA")
+    if not rows:
+        problemas.append("SIN_FILAS")
+    if dropped:
+        problemas.append("LINEAS_PERDIDAS")
+    if deuda is None:
+        problemas.append("SIN_DEUDA_TOTAL")
+    elif saldo_ant is None:
+        problemas.append("SIN_SALDO_ANTERIOR")
+    elif abs(descuadre) >= 0.5:
+        # The bank's own arithmetic does not close: rows were missed,
+        # double-counted, or valued wrong.
+        problemas.append(f"DESCUADRE({descuadre:,.0f})")
+    if dup_check and dup_check(meta):
+        problemas.append("YA_CARGADA")
+
+    row["estado"] = " + ".join(problemas) if problemas else "OK"
+    results.append(row)
+
+
+def _marcar_claves_duplicadas(results: list[dict]) -> list[dict]:
     # A key collision means two different PDFs would fight for one row.
     claves = Counter(r["clave"] for r in results if r["clave"])
     for r in results:

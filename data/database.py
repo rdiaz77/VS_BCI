@@ -42,6 +42,7 @@ TRANSACCIONES_COLS = [
     "FACT_KAME",
     "TRASPASADO",
     "ARCHIVO_ORIGEN",
+    "CUOTA",              # "06/12" on an installment line, empty otherwise
 ]
 
 MONEY_COLS = ("MONTO_ORIGEN", "MONTO_OPERACION", "MONTO_TOTAL", "MONTO_CLP")
@@ -141,10 +142,16 @@ def _ensure_schema(conn) -> None:
                 CONCILIADO        INTEGER NOT NULL DEFAULT 0,
                 FACT_KAME         INTEGER NOT NULL DEFAULT 0,
                 TRASPASADO        INTEGER NOT NULL DEFAULT 0,
-                ARCHIVO_ORIGEN    TEXT
+                ARCHIVO_ORIGEN    TEXT,
+                CUOTA             TEXT
             );
             """
         )
+        # An installment purchase reprints the original line, date and all, on
+        # every statement until it is paid off, so (date, description, amount)
+        # repeats legitimately across months. The cuota number is the only
+        # thing that tells those rows apart from an accidental double import.
+        cur.execute("ALTER TABLE transacciones ADD COLUMN IF NOT EXISTS CUOTA TEXT;")
         cur.execute(
             """
             CREATE TABLE IF NOT EXISTS estados_cuenta (
@@ -178,6 +185,7 @@ def _ensure_schema(conn) -> None:
             ("idx_tx_origen_kame", "transacciones(ORIGEN, FACT_KAME)"),
             ("idx_ec_fecha_d", "estados_cuenta(FECHA_ESTADO_D)"),
             ("idx_ec_ident", "estados_cuenta(ORIGEN, FECHA_ESTADO, TARJETA_ULT4)"),
+            ("idx_tx_cuota", "transacciones(CUOTA)"),
         ):
             cur.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {target};")
     conn.commit()

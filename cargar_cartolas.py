@@ -16,7 +16,7 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-from data.common import detectar_tipo_cartola
+from data.common import dividir_en_cartolas
 from data.database import (
     auto_tipo_gasto,
     estado_ya_procesado,
@@ -24,8 +24,8 @@ from data.database import (
     ingest_statement,
     init_db,
 )
-from data.extractor_internacional import leer_cartola_internacional
-from data.extractor_nacional import leer_cartola_nacional
+from data.extractor_internacional import parse_internacional
+from data.extractor_nacional import parse_nacional
 from validar_cartolas import (
     _saldo_anterior,
     agregar_filtros_periodo,
@@ -50,7 +50,6 @@ def _conn():
 def cargar(carpeta: Path, filtros, ejecutar: bool) -> None:
     anios, meses, desde, hasta = filtros
     conn = _conn()
-    historic = fetch_tipo_gasto_map(conn)
 
     pdfs = sorted(carpeta.rglob("*.pdf"))
     if not pdfs:
@@ -65,89 +64,103 @@ def cargar(carpeta: Path, filtros, ejecutar: bool) -> None:
         rel = str(path.relative_to(carpeta))
         try:
             raw = path.read_bytes()
-            tipo = detectar_tipo_cartola(raw)
+            cartolas = dividir_en_cartolas(raw)
         except Exception as e:
             stats["ilegible"] += 1
             rechazadas.append((rel, f"ilegible: {type(e).__name__}"))
             continue
 
-        if tipo is None:
+        if not cartolas:
             stats["no_es_cartola"] += 1
             continue
 
-        extractor = (
-            leer_cartola_internacional if tipo == "INTERNACIONAL" else leer_cartola_nacional
-        )
-        try:
-            rows, meta = extractor(raw, filename=path.name)
-        except Exception as e:
-            stats["error_parseo"] += 1
-            rechazadas.append((rel, f"error de parseo: {type(e).__name__}"))
-            continue
+        # One PDF can hold dozens of statements; each is judged on its own so a
+        # single bad month cannot pull the rest of the file in or out.
+        for tipo, pages in cartolas:
+            _cargar_una(
+                conn, pages, tipo, rel, path.name, filtros,
+                ejecutar, stats, cargadas, rechazadas, vistos,
+            )
 
-        fecha = meta.get("FECHA_ESTADO") or ""
-        if not en_periodo(fecha, anios, meses, desde, hasta):
-            stats["fuera_de_periodo"] += 1
-            continue
+    _resumen(stats, cargadas, rechazadas, anios, meses, desde, hasta, ejecutar)
 
-        if not rows:
-            stats["sin_filas"] += 1
-            rechazadas.append((rel, "sin filas"))
-            continue
 
-        # ---- refuse anything whose own arithmetic does not close ----
-        intl = tipo == "INTERNACIONAL"
-        deuda = meta.get("DEUDA_TOTAL")
-        saldo = _saldo_anterior(raw, intl)
-        if deuda is None or saldo is None:
-            stats["sin_totales"] += 1
-            rechazadas.append((rel, "no se pudo leer deuda/saldo anterior"))
-            continue
-        col = "MONTO_OPERACION" if intl else "MONTO_TOTAL"
-        suma = sum((r[col] or 0) for r in rows)
-        descuadre = round(float(saldo) + float(suma) - float(deuda), 2)
-        if abs(descuadre) >= TOLERANCIA:
-            stats["descuadre"] += 1
-            rechazadas.append((rel, f"descuadre {descuadre:,.0f}"))
-            continue
+def _cargar_una(
+    conn, pages, tipo, rel, filename, filtros_periodo,
+    ejecutar, stats, cargadas, rechazadas, vistos,
+) -> None:
+    anios, meses, desde, hasta = filtros_periodo
+    parse = parse_internacional if tipo == "INTERNACIONAL" else parse_nacional
+    try:
+        rows, meta = parse(pages, filename)
+    except Exception as e:
+        stats["error_parseo"] += 1
+        rechazadas.append((rel, f"error de parseo: {type(e).__name__}"))
+        return
 
-        # ---- duplicates: against the DB, and within this same batch ----
-        clave = meta.get("ARCHIVO_ORIGEN") or ""
-        if clave in vistos:
-            stats["duplicada_en_lote"] += 1
-            continue
-        dup = estado_ya_procesado(conn, meta)
-        if dup:
-            stats["ya_cargada"] += 1
-            continue
-        vistos.add(clave)
+    fecha = meta.get("FECHA_ESTADO") or ""
+    if not en_periodo(fecha, anios, meses, desde, hasta):
+        stats["fuera_de_periodo"] += 1
+        return
 
-        for r in rows:
-            if not r.get("TIPO_GASTO"):
-                r["TIPO_GASTO"] = auto_tipo_gasto(
-                    r.get("DESCRIPCION", ""), historic, origen=r.get("ORIGEN", "")
-                )
+    if not rows:
+        stats["sin_filas"] += 1
+        rechazadas.append((rel, "sin filas"))
+        return
 
-        if not ejecutar:
-            stats["se_cargaria"] += 1
-            cargadas.append((rel, tipo, fecha, len(rows)))
-            vistos.add(clave)
-            continue
+    # ---- refuse anything whose own arithmetic does not close ----
+    intl = tipo == "INTERNACIONAL"
+    deuda = meta.get("DEUDA_TOTAL")
+    saldo = _saldo_anterior(pages, intl)
+    if deuda is None or saldo is None:
+        stats["sin_totales"] += 1
+        rechazadas.append((rel, "no se pudo leer deuda/saldo anterior"))
+        return
+    col = "MONTO_OPERACION" if intl else "MONTO_TOTAL"
+    suma = sum((r[col] or 0) for r in rows)
+    descuadre = round(float(saldo) + float(suma) - float(deuda), 2)
+    if abs(descuadre) >= TOLERANCIA:
+        stats["descuadre"] += 1
+        rechazadas.append((rel, f"descuadre {descuadre:,.0f}"))
+        return
 
-        try:
-            n = ingest_statement(conn, rows, meta)
-        except Exception as e:
-            stats["error_insert"] += 1
-            rechazadas.append((rel, f"error al insertar: {e}"))
-            continue
-        if n == 0:
-            stats["ya_cargada"] += 1
-        else:
-            stats["cargadas"] += 1
-            cargadas.append((rel, tipo, fecha, n))
-            # A later statement can now inherit categories from this one.
-            historic = fetch_tipo_gasto_map(conn)
+    # ---- duplicates: against the DB, and within this same batch ----
+    clave = meta.get("ARCHIVO_ORIGEN") or ""
+    if clave in vistos:
+        stats["duplicada_en_lote"] += 1
+        return
+    dup = estado_ya_procesado(conn, meta)
+    if dup:
+        stats["ya_cargada"] += 1
+        return
+    vistos.add(clave)
 
+    historic = fetch_tipo_gasto_map(conn)
+    for r in rows:
+        if not r.get("TIPO_GASTO"):
+            r["TIPO_GASTO"] = auto_tipo_gasto(
+                r.get("DESCRIPCION", ""), historic, origen=r.get("ORIGEN", "")
+            )
+
+    if not ejecutar:
+        stats["se_cargaria"] += 1
+        cargadas.append((rel, tipo, fecha, len(rows)))
+        return
+
+    try:
+        n = ingest_statement(conn, rows, meta)
+    except Exception as e:
+        stats["error_insert"] += 1
+        rechazadas.append((rel, f"error al insertar: {e}"))
+        return
+    if n == 0:
+        stats["ya_cargada"] += 1
+    else:
+        stats["cargadas"] += 1
+        cargadas.append((rel, tipo, fecha, n))
+
+
+def _resumen(stats, cargadas, rechazadas, anios, meses, desde, hasta, ejecutar) -> None:
     modo = "CARGA REAL" if ejecutar else "ENSAYO (no se escribió nada)"
     print(f"\n=== {modo} — {describir_filtros(anios, meses, desde, hasta)} ===\n")
     for rel, tipo, fecha, n in cargadas:

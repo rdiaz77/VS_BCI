@@ -1,12 +1,9 @@
 from __future__ import annotations
 
-import io
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
-import pdfplumber
-
-from .common import build_archivo_origen, extraer_identidad
+from .common import build_archivo_origen, dividir_en_cartolas, extraer_identidad
 
 # ============================================================
 # Parser for BCI "Estado de Cuenta Nacional" (CLP).
@@ -82,72 +79,72 @@ def _extract_header(full_text: str) -> Dict[str, Any]:
     return ident
 
 
-def leer_cartola_nacional(
-    pdf_bytes: bytes, filename: str = "archivo.pdf"
+def parse_nacional(
+    page_texts: List[str], filename: str = "archivo.pdf"
 ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
-    """Extract national (CLP) transactions and statement metadata.
+    """Parse the pages of exactly one national statement.
 
-    Returns (rows, meta) where meta describes the statement (for estados_cuenta).
+    Callers must pass the pages of a single statement — see
+    `common.dividir_en_cartolas`. Sweeping a merged archive through here
+    attributes every transaction in it to the first header's month.
     """
     rows: List[Dict[str, Any]] = []
+    full_text = "\n".join(page_texts)
 
-    with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
-        page_texts = [(p.extract_text() or "") for p in pdf.pages]
-        full_text = "\n".join(page_texts)
+    hdr = _extract_header(full_text)
+    titular = hdr["TITULAR_NOMBRE"]
+    ult4 = hdr["TARJETA_ULT4"]
+    archivo_origen = build_archivo_origen(
+        "BCI_NAC", ult4, titular, hdr["FECHA_ESTADO"], filename
+    )
 
-        hdr = _extract_header(full_text)
-        titular = hdr["TITULAR_NOMBRE"]
-        ult4 = hdr["TARJETA_ULT4"]
-        archivo_origen = build_archivo_origen(
-            "BCI_NAC", ult4, titular, hdr["FECHA_ESTADO"], filename
-        )
+    for text in page_texts:
+        for raw in text.splitlines():
+            line = " ".join(raw.split())
+            if not line:
+                continue
+            if line.upper().startswith(SKIP_PREFIXES):
+                continue
 
-        for text in page_texts:
-            for raw in text.splitlines():
-                line = " ".join(raw.split())
-                if not line:
-                    continue
-                if line.upper().startswith(SKIP_PREFIXES):
-                    continue
+            m = LINE_RE.search(line)
+            if not m:
+                continue
 
-                m = LINE_RE.search(line)
-                if not m:
-                    continue
+            desc = re.sub(r"\s{2,}", " ", m.group("desc").strip())
+            if not desc or desc.upper().startswith("TOTAL"):
+                continue
 
-                desc = re.sub(r"\s{2,}", " ", m.group("desc").strip())
-                if not desc or desc.upper().startswith("TOTAL"):
-                    continue
+            monto_op = normalizar_monto_clp(m.group("m1"))
+            # On an installment purchase only the monthly cuota is billed
+            # this period; m2 is the whole remaining debt for that purchase.
+            # Single-payment lines print as 01/01 with the same amount.
+            cuota_val = m.group("m_cuota")
+            monto_total = normalizar_monto_clp(
+                cuota_val if cuota_val is not None else m.group("m2")
+            )
 
-                monto_op = normalizar_monto_clp(m.group("m1"))
-                # On an installment purchase only the monthly cuota is billed
-                # this period; m2 is the whole remaining debt for that purchase.
-                # Single-payment lines print as 01/01 with the same amount.
-                cuota_val = m.group("m_cuota")
-                monto_total = normalizar_monto_clp(
-                    cuota_val if cuota_val is not None else m.group("m2")
-                )
-
-                rows.append(
-                    {
-                        "ORIGEN": "NACIONAL",
-                        "TITULAR_NOMBRE": titular,
-                        "TARJETA_ULT4": ult4,
-                        "FECHA_OPERACION": _ddmmyy_to_mmddyy(m.group("fecha")),
-                        "DESCRIPCION": desc,
-                        "CIUDAD": "",
-                        "PAIS": "",
-                        "REF_INTERNACIONAL": m.group("codigo") or "",
-                        "MONTO_ORIGEN": None,
-                        "MONTO_OPERACION": monto_op,
-                        "MONTO_TOTAL": monto_total,
-                        "MONEDA": "CLP",
-                        "TIPO_GASTO": "",
-                        "CONCILIADO": 0,
-                        "FACT_KAME": 0,
-                        "TRASPASADO": 0,
-                        "ARCHIVO_ORIGEN": archivo_origen,
-                    }
-                )
+            rows.append(
+                {
+                    "ORIGEN": "NACIONAL",
+                    "TITULAR_NOMBRE": titular,
+                    "TARJETA_ULT4": ult4,
+                    "FECHA_OPERACION": _ddmmyy_to_mmddyy(m.group("fecha")),
+                    "DESCRIPCION": desc,
+                    "CIUDAD": "",
+                    "PAIS": "",
+                    "REF_INTERNACIONAL": m.group("codigo") or "",
+                    "MONTO_ORIGEN": None,
+                    "MONTO_OPERACION": monto_op,
+                    "MONTO_TOTAL": monto_total,
+                    "MONEDA": "CLP",
+                    "TIPO_GASTO": "",
+                    "CONCILIADO": 0,
+                    "FACT_KAME": 0,
+                    "TRASPASADO": 0,
+                    "ARCHIVO_ORIGEN": archivo_origen,
+                    "CUOTA": m.group("cuota") or "",
+                }
+            )
 
     meta = {
         "ORIGEN": "NACIONAL",
@@ -162,3 +159,13 @@ def leer_cartola_nacional(
         "MONEDA": "CLP",
     }
     return rows, meta
+
+
+def leer_cartola_nacional(
+    pdf_bytes: bytes, filename: str = "archivo.pdf"
+) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    """Extract the first national statement in the PDF, with its metadata."""
+    for tipo, page_texts in dividir_en_cartolas(pdf_bytes):
+        if tipo == "NACIONAL":
+            return parse_nacional(page_texts, filename)
+    return [], {}
