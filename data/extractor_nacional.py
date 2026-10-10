@@ -15,12 +15,15 @@ from .common import build_archivo_origen, extraer_identidad
 # ============================================================
 
 # Matches a CLP transaction line, anchored on the operation date.
+# Trailing "N°CUOTA $ VALOR" is present on installment purchases: the columns are
+# MONTO OPERACION | MONTO TOTAL A PAGAR | N° CUOTA | VALOR CUOTA MENSUAL.
 LINE_RE = re.compile(
     r"(?P<fecha>\d{2}/\d{2}/\d{2})\s+"
     r"(?:(?P<codigo>\d{6,})\s+)?"
     r"(?P<desc>.+?)\s+"
     r"\$\s*(?P<m1>-?\d{1,3}(?:\.\d{3})*)\s+"
     r"\$\s*(?P<m2>-?\d{1,3}(?:\.\d{3})*)"
+    r"(?:\s+(?P<cuota>\d{2}/\d{2})\s+\$\s*(?P<m_cuota>-?\d{1,3}(?:\.\d{3})*))?"
 )
 
 PERIODO_RE = re.compile(
@@ -116,7 +119,13 @@ def leer_cartola_nacional(
                     continue
 
                 monto_op = normalizar_monto_clp(m.group("m1"))
-                monto_total = normalizar_monto_clp(m.group("m2"))
+                # On an installment purchase only the monthly cuota is billed
+                # this period; m2 is the whole remaining debt for that purchase.
+                # Single-payment lines print as 01/01 with the same amount.
+                cuota_val = m.group("m_cuota")
+                monto_total = normalizar_monto_clp(
+                    cuota_val if cuota_val is not None else m.group("m2")
+                )
 
                 rows.append(
                     {

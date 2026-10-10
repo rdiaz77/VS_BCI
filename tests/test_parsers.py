@@ -14,7 +14,11 @@ from data.database import (
     auto_tipo_gasto,
 )
 from data.extractor_internacional import _to_float
-from data.extractor_nacional import _ddmmyy_to_mmddyy, normalizar_monto_clp
+from data.extractor_nacional import (
+    LINE_RE,
+    _ddmmyy_to_mmddyy,
+    normalizar_monto_clp,
+)
 
 HEADER = (
     "ESTADO DE CUENTA NACIONAL DE TARJETA DE CREDITO "
@@ -126,3 +130,42 @@ def test_todas_las_reglas_apuntan_a_categorias_validas():
         assert tipo in opciones("NACIONAL"), f"NAC: {tipo!r} no está en la lista"
     for _, tipo in STATIC_TIPO_GASTO_INTL:
         assert tipo in opciones("INTERNACIONAL"), f"INTL: {tipo!r} no está en la lista"
+
+
+# ---------------------------------------------------------------- cuotas
+# An installment purchase bills only the monthly cuota in the current period.
+# Reading the "total a pagar" column instead overstates the month of purchase
+# and then double-counts as the later cuotas arrive.
+def test_compra_en_cuotas_usa_el_valor_de_la_cuota():
+    line = (
+        "SANTIAGO 11/08/20 130810280075 PC FACTORY INTERNET TASA INT. 0,00% "
+        "$ 670.080 $ 670.080 01/03 $ 223.360"
+    )
+    m = LINE_RE.search(line)
+    assert m is not None
+    assert m.group("cuota") == "01/03"
+    assert normalizar_monto_clp(m.group("m_cuota")) == 223_360
+    assert normalizar_monto_clp(m.group("m1")) == 670_080
+
+
+def test_pago_unico_cuota_01_01_no_cambia_el_monto():
+    line = (
+        "SANTIAGO 08/01/26 090110788051 COMUNIDADFELIZ SANTIAGO "
+        "$ 36.416 $ 36.416 01/01 $ 36.416"
+    )
+    m = LINE_RE.search(line)
+    assert normalizar_monto_clp(m.group("m_cuota")) == normalizar_monto_clp(m.group("m2"))
+
+
+def test_linea_sin_columna_de_cuota_sigue_matcheando():
+    line = "17/08/20 A Y E SANTIAGO $ 82.650 $ 82.650"
+    m = LINE_RE.search(line)
+    assert m is not None
+    assert m.group("m_cuota") is None
+    assert normalizar_monto_clp(m.group("m2")) == 82_650
+
+
+def test_cuota_negativa_de_un_pago_se_lee_completa():
+    line = "08/01/26 080100343370 PAGO PAC EN PESOS $ -770.470 $ -770.470 01/01 $ -770.470"
+    m = LINE_RE.search(line)
+    assert normalizar_monto_clp(m.group("m_cuota")) == -770_470

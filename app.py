@@ -10,7 +10,11 @@ logging.basicConfig(
 )
 _log = logging.getLogger(__name__)
 
-from data.categorias import opciones as tipo_gasto_opciones
+from data.categorias import (
+    CATEGORIAS_NO_GASTO,
+    KAME_ACCOUNT_MAP,
+    opciones as tipo_gasto_opciones,
+)
 from data.common import detectar_tipo_cartola, resumen_meta
 from data.database import (
     auto_match_traspasos,
@@ -27,7 +31,9 @@ from data.database import (
     fetch_traspaso_suggestions,
     ingest_statement,
     init_pool,
+    fetch_asiento_mes,
     marcar_fact_kame,
+    marcar_fact_kame_mes,
     marcar_traspaso,
     mover_a_pendientes,
     pooled_conn,
@@ -719,6 +725,126 @@ def render_admin(conn, db_url: str) -> None:
 
 
 # ============================================================
+# Asientos Kame — monthly accounting entries
+# ============================================================
+MESES = [
+    "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
+    "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre",
+]
+
+
+def render_asientos_kame(conn) -> None:
+    st.subheader("📋 Asientos Kame")
+
+    c1, c2 = st.columns(2)
+    year = c1.number_input("Año", min_value=2020, max_value=2026, value=2022, step=1)
+    month = c2.selectbox("Mes", range(1, 13), format_func=lambda m: MESES[m - 1])
+
+    cols, rows = fetch_asiento_mes(conn, int(year), int(month))
+    if not rows:
+        st.info("Sin transacciones de gasto para este mes.")
+        return
+
+    df = pd.DataFrame(rows, columns=cols)
+    df["MONTO"] = df["MONTO"].apply(lambda v: float(v) if v is not None else 0.0)
+
+    total_pending = int((df["FACT_KAME"] == 0).sum())
+    total_done = int((df["FACT_KAME"] == 1).sum())
+    total_rows = len(df)
+
+    st.caption(
+        f"{total_rows} transacciones — "
+        f"**{total_pending} pendientes**, {total_done} ya ingresadas"
+    )
+
+    # --- Build asiento grouped by Kame account ---
+    asiento_rows = []
+    unmapped = []
+    for tg, grp in df.groupby("TIPO_GASTO"):
+        mapping = KAME_ACCOUNT_MAP.get(tg)
+        if mapping is None:
+            unmapped.append(tg)
+            continue
+        code, name = mapping
+        asiento_rows.append({
+            "Código": code,
+            "Cuenta": name,
+            "Categoría": tg,
+            "Monto CLP": grp["MONTO"].sum(),
+            "# Tx": len(grp),
+            "Pendientes": int((grp["FACT_KAME"] == 0).sum()),
+        })
+
+    if unmapped:
+        st.warning(f"Categorías sin mapeo Kame: {', '.join(sorted(unmapped))}")
+
+    if not asiento_rows:
+        st.info("No hay filas mapeables a cuentas Kame.")
+        return
+
+    asiento_df = pd.DataFrame(asiento_rows)
+
+    # Aggregate by account code
+    summary = (
+        asiento_df.groupby(["Código", "Cuenta"])
+        .agg({"Monto CLP": "sum", "# Tx": "sum", "Pendientes": "sum"})
+        .reset_index()
+        .sort_values("Código")
+    )
+
+    st.markdown("### Asiento Contable")
+    st.dataframe(
+        summary.style.format({"Monto CLP": "${:,.0f}"}),
+        use_container_width=True,
+        hide_index=True,
+    )
+
+    total_gasto = summary["Monto CLP"].sum()
+    st.metric("Total Gasto del Mes", f"${total_gasto:,.0f}")
+
+    # --- Detail by category ---
+    with st.expander("Detalle por categoría"):
+        st.dataframe(
+            asiento_df.sort_values("Código").style.format({"Monto CLP": "${:,.0f}"}),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+    # --- Transaction list ---
+    with st.expander(f"Transacciones ({total_rows})"):
+        display = df[["FECHA", "TITULAR", "ORIGEN", "DESCRIPCION", "TIPO_GASTO", "MONTO", "FACT_KAME"]].copy()
+        display["FACT_KAME"] = display["FACT_KAME"].map({0: "Pendiente", 1: "Ingresado"})
+        st.dataframe(
+            display.style.format({"MONTO": "${:,.0f}"}),
+            use_container_width=True,
+            height=400,
+            hide_index=True,
+        )
+
+    # --- CSV export ---
+    csv_data = summary.to_csv(index=False)
+    st.download_button(
+        "📥 Descargar asiento CSV",
+        csv_data,
+        file_name=f"asiento_kame_{year}_{month:02d}.csv",
+        mime="text/csv",
+    )
+
+    # --- Batch mark ---
+    if total_pending > 0:
+        st.markdown("---")
+        if st.button(
+            f"✅ Marcar {total_pending} transacciones pendientes como ingresadas",
+            type="primary",
+        ):
+            count = marcar_fact_kame_mes(conn, int(year), int(month))
+            st.success(f"{count} transacciones marcadas como ingresadas en Kame.")
+            st.rerun()
+    else:
+        st.success("Todas las transacciones de este mes ya están ingresadas.")
+
+
+# ============================================================
 # Main
 # ============================================================
 def main() -> None:
@@ -732,6 +858,7 @@ def main() -> None:
             "📄 Nacional (CLP)",
             "🌎 Internacional (USD)",
             "🔗 Conciliación Traspaso",
+            "📋 Asientos Kame",
             "📈 Dashboard",
             "⚙️ Admin",
         ],
@@ -745,6 +872,8 @@ def main() -> None:
             render_transactions_page(conn, "INTERNACIONAL")
         elif page == "🔗 Conciliación Traspaso":
             render_traspaso_page(conn)
+        elif page == "📋 Asientos Kame":
+            render_asientos_kame(conn)
         elif page == "📈 Dashboard":
             cols, rows = fetch_transacciones(conn)
             show_dashboard(_as_float(pd.DataFrame(rows, columns=cols)), conn=conn)

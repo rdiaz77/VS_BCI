@@ -838,6 +838,67 @@ def delete_estado_cuenta(conn, archivo_origen: str) -> None:
         raise
 
 
+def fetch_asiento_mes(
+    conn, year: int, month: int,
+) -> Tuple[List[str], List[tuple]]:
+    """Return expense rows for a given month, excluding non-expense categories
+    and negative MONTO CANCELADO rows.  For NACIONAL rows the amount is
+    COALESCE(monto_clp, monto_total); for INTERNACIONAL rows it is monto_clp
+    (the CLP value from the national traspaso line).
+    """
+    sql = """
+        SELECT id, origen, titular_nombre, tarjeta_ult4,
+               fecha_operacion, descripcion, tipo_gasto, fact_kame,
+               CASE WHEN origen = 'INTERNACIONAL' THEN monto_clp
+                    ELSE COALESCE(monto_clp, monto_total) END AS monto
+        FROM transacciones
+        WHERE EXTRACT(YEAR FROM fecha_operacion_d) = %s
+          AND EXTRACT(MONTH FROM fecha_operacion_d) = %s
+          AND tipo_gasto IS NOT NULL
+          AND tipo_gasto NOT IN (
+              'BCI Paga TC', 'Pago Tarjeta', 'Tr Deuda Intl',
+              'Trp a Deuda Nacional', 'Personal RD', 'Personal CA', 'Personal RM',
+              'Devolución'
+          )
+          AND NOT (tipo_gasto IN ('Otro','Otros') AND COALESCE(monto_total, 0) < 0)
+        ORDER BY fecha_operacion_d, id
+    """
+    cols = [
+        "ID", "ORIGEN", "TITULAR", "TARJETA", "FECHA",
+        "DESCRIPCION", "TIPO_GASTO", "FACT_KAME", "MONTO",
+    ]
+    with conn.cursor() as cur:
+        cur.execute(sql, (year, month))
+        return cols, cur.fetchall()
+
+
+def marcar_fact_kame_mes(conn, year: int, month: int) -> int:
+    """Mark all qualifying expense rows in a month as FACT_KAME=1.
+    Returns count of rows updated."""
+    sql = """
+        UPDATE transacciones SET fact_kame = 1
+        WHERE EXTRACT(YEAR FROM fecha_operacion_d) = %s
+          AND EXTRACT(MONTH FROM fecha_operacion_d) = %s
+          AND fact_kame = 0
+          AND tipo_gasto IS NOT NULL
+          AND tipo_gasto NOT IN (
+              'BCI Paga TC', 'Pago Tarjeta', 'Tr Deuda Intl',
+              'Trp a Deuda Nacional', 'Personal RD', 'Personal CA', 'Personal RM',
+              'Devolución'
+          )
+          AND NOT (tipo_gasto IN ('Otro','Otros') AND COALESCE(monto_total, 0) < 0)
+    """
+    try:
+        with conn.cursor() as cur:
+            cur.execute(sql, (year, month))
+            count = cur.rowcount
+        conn.commit()
+        return count
+    except Exception:
+        conn.rollback()
+        raise
+
+
 def reset_db(conn) -> None:
     try:
         with conn.cursor() as cur:
