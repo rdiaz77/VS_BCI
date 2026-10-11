@@ -118,10 +118,17 @@ def parse_nacional(
             # On an installment purchase only the monthly cuota is billed
             # this period; m2 is the whole remaining debt for that purchase.
             # Single-payment lines print as 01/01 with the same amount.
+            cuota_num = m.group("cuota") or ""
             cuota_val = m.group("m_cuota")
-            monto_total = normalizar_monto_clp(
-                cuota_val if cuota_val is not None else m.group("m2")
-            )
+            if cuota_num.startswith("00/"):
+                # Cuota zero: the purchase is on the statement but its first
+                # installment is not billed until next period. Charging it now
+                # overstates the month and breaks the statement's own total.
+                monto_total = 0
+            elif cuota_val is not None:
+                monto_total = normalizar_monto_clp(cuota_val)
+            else:
+                monto_total = normalizar_monto_clp(m.group("m2"))
 
             rows.append(
                 {

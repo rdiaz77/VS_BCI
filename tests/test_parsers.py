@@ -11,6 +11,8 @@ from data.common import build_archivo_origen, extraer_identidad
 from data.database import (
     STATIC_TIPO_GASTO_INTL,
     STATIC_TIPO_GASTO_NAC,
+    TRANSACCIONES_COLS,
+    _valor_columna,
     auto_tipo_gasto,
 )
 from data.extractor_internacional import _to_float
@@ -216,6 +218,32 @@ def test_la_cuota_se_guarda_para_distinguir_mensualidades():
     rows, _ = parse_nacional(pages, "x.pdf")
     assert rows[0]["CUOTA"] == "06/12"
     assert rows[0]["MONTO_TOTAL"] == 34_916
+
+
+def test_el_insert_cubre_todas_las_columnas():
+    """A column added to TRANSACCIONES_COLS but not to the value tuple used to
+    fail at insert time with a bare 'tuple index out of range'."""
+    pages = [_pagina("NACIONAL", "4364", "24/12/2024"),
+             "SANTIAGO 05/12/24 061210673806 FLOW E-CERTCHILE $ 29.738 $ 29.738"]
+    rows, _ = parse_nacional(pages, "x.pdf")
+    valores = tuple(_valor_columna(rows[0], c) for c in TRANSACCIONES_COLS)
+    assert len(valores) == len(TRANSACCIONES_COLS)
+    assert valores[TRANSACCIONES_COLS.index("CUOTA")] == ""
+    assert valores[TRANSACCIONES_COLS.index("MONTO_TOTAL")] == 29_738
+
+
+def test_cuota_cero_no_cobra_nada_este_periodo():
+    """00/NN means the purchase is listed but its first installment is not yet
+    billed; charging it breaks saldo anterior + rows == deuda total."""
+    pages = [
+        _pagina("NACIONAL", "5243", "25/11/2025"),
+        "SANTIAGO 19/11/25 201138449144 COMERCIALIZADORA Y TASA INT 3,14% "
+        "$ 33.900 $ 49.174 00/23 $ 2.138",
+    ]
+    rows, _ = parse_nacional(pages, "x.pdf")
+    assert rows[0]["CUOTA"] == "00/23"
+    assert rows[0]["MONTO_TOTAL"] == 0
+    assert rows[0]["MONTO_OPERACION"] == 33_900
 
 
 def test_linea_sin_cuota_guarda_cuota_vacia():

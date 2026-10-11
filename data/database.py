@@ -250,6 +250,28 @@ def estado_ya_procesado(conn, meta: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 # Ingest — statement + its transactions, in one transaction
 # ---------------------------------------------------------------------------
 
+_COLS_ENTERAS = ("CONCILIADO", "FACT_KAME", "TRASPASADO")
+_COLS_NUMERICAS = ("MONTO_ORIGEN", "MONTO_OPERACION", "MONTO_TOTAL", "MONTO_CLP")
+
+
+def _valor_columna(row: Dict[str, Any], col: str) -> Any:
+    """Value for one column of the INSERT, derived from the column name.
+
+    Driving this off TRANSACCIONES_COLS keeps the value tuple aligned with the
+    column list: adding a column to one without the other used to produce a
+    bare "tuple index out of range" at insert time.
+    """
+    if col == "FECHA_OPERACION_D":
+        return row.get("FECHA_OPERACION", "")  # the placeholder wraps it in to_date
+    if col in _COLS_ENTERAS:
+        return int(row.get(col) or 0)
+    if col in _COLS_NUMERICAS:
+        return row.get(col)
+    if col in ("TITULAR_NOMBRE", "TARJETA_ULT4"):
+        return row.get(col)
+    return row.get(col, "")
+
+
 def ingest_statement(conn, rows: Iterable[Dict[str, Any]], meta: Dict[str, Any]) -> int:
     """Insert one statement and its transactions atomically.
 
@@ -300,27 +322,7 @@ def ingest_statement(conn, rows: Iterable[Dict[str, Any]], meta: Dict[str, Any])
                     for c in TRANSACCIONES_COLS
                 )
                 data = [
-                    (
-                        r.get("ORIGEN", ""),
-                        r.get("TITULAR_NOMBRE"),
-                        r.get("TARJETA_ULT4"),
-                        r.get("FECHA_OPERACION", ""),
-                        r.get("FECHA_OPERACION", ""),  # -> to_date(...)
-                        r.get("DESCRIPCION", ""),
-                        r.get("CIUDAD", ""),
-                        r.get("PAIS", ""),
-                        r.get("REF_INTERNACIONAL", ""),
-                        r.get("MONTO_ORIGEN"),
-                        r.get("MONTO_OPERACION"),
-                        r.get("MONTO_TOTAL"),
-                        r.get("MONTO_CLP"),
-                        r.get("MONEDA", ""),
-                        r.get("TIPO_GASTO", ""),
-                        int(r.get("CONCILIADO") or 0),
-                        int(r.get("FACT_KAME") or 0),
-                        int(r.get("TRASPASADO") or 0),
-                        r.get("ARCHIVO_ORIGEN", ""),
-                    )
+                    tuple(_valor_columna(r, c) for c in TRANSACCIONES_COLS)
                     for r in rows
                 ]
                 psycopg2.extras.execute_batch(
