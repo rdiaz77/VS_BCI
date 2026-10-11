@@ -108,8 +108,9 @@ KAME_ACCOUNT_MAP: dict[str, tuple[str, str]] = {
 CUENTA_PRESTAMO_RD = ("2.02.04.04", "Préstamos Particulares - Rdiaz")
 CUENTA_FONDOS_POR_RENDIR = ("1.01.01.10", "Fondos por Rendir")
 CUENTA_IMPOSICIONES = ("2.01.12.01", "Imposiciones por Pagar")
-# Claudio's personal charges need his own receivable; 2.02.04.04 is Rafael's.
-CUENTA_POR_COBRAR_CA = ("PENDIENTE-CxC-CA", "Cuenta por cobrar Claudio")
+# Claudio has no receivable of his own, so his personal charges stay on the
+# national card and the glosa carries his initials for later collection.
+CUENTA_POR_COBRAR_CA = ("2.01.01.03", "Tarjeta de Credito Banco (BCI) — glosa: CA")
 
 # The bank's category sometimes lumps merchants that belong to different Kame
 # accounts, and only the merchant name separates them. Checked before the
