@@ -51,7 +51,9 @@ def _extract_header_fields(full_text: str) -> Dict[str, Any]:
         periodo_hasta = m.group(1).replace("/", "-")
 
     deuda_total = None
-    m = re.search(r"DEUDA TOTAL\s+US\$\s*([\d.,]+)", full_text, re.IGNORECASE)
+    # The sign matters: a card can carry a credit balance (DEUDA TOTAL US$ -279,88),
+    # and dropping the minus left the statement with no total at all.
+    m = re.search(r"DEUDA TOTAL\s+US\$\s*(-?[\d.,]+)", full_text, re.IGNORECASE)
     if m:
         try:
             deuda_total = _to_float(m.group(1))

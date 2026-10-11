@@ -15,7 +15,7 @@ from data.database import (
     _valor_columna,
     auto_tipo_gasto,
 )
-from data.extractor_internacional import _to_float
+from data.extractor_internacional import _extract_header_fields, _to_float
 from data.extractor_nacional import (
     LINE_RE,
     _ddmmyy_to_mmddyy,
@@ -218,6 +218,20 @@ def test_la_cuota_se_guarda_para_distinguir_mensualidades():
     rows, _ = parse_nacional(pages, "x.pdf")
     assert rows[0]["CUOTA"] == "06/12"
     assert rows[0]["MONTO_TOTAL"] == 34_916
+
+
+def test_deuda_total_internacional_negativa_se_lee():
+    """A card in credit prints DEUDA TOTAL US$ -279,88; dropping the sign left
+    the statement with no total, which blocks the traspaso match."""
+    texto = (
+        "ESTADO DE CUENTA INTERNACIONAL DE TARJETA DE CREDITO "
+        "NOMBRE DEL TITULAR RAFAEL P. DIAZ "
+        "N° DE TARJETA DE CRÉDITO XXXXXXXXXXXX4364 "
+        "FECHA ESTADO DE CUENTA 23/06/2023 "
+        "SALDO ANTERIOR FACTURADO US$ -831,80 "
+        "TRASPASO DEUDA NACIONAL US$ 0,00 DEUDA TOTAL US$ -279,88"
+    )
+    assert _extract_header_fields(texto)["DEUDA_TOTAL"] == -279.88
 
 
 def test_el_insert_cubre_todas_las_columnas():

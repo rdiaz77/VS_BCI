@@ -506,15 +506,31 @@ def marcar_traspaso(
             row = cur.fetchone()
 
             tasa = None
-            if match_rid is not None and row and row[1]:
+            if match_rid is not None:
+                # Prefer the two sides of this same transfer: the national CLP
+                # line and the international credit that cleared it. DEUDA TOTAL
+                # is the balance before any ABONO, so it overstates the divisor
+                # whenever a payment was made in USD.
                 cur.execute(
-                    "SELECT MONTO_TOTAL FROM transacciones WHERE id = %s",
+                    """
+                    SELECT n.MONTO_TOTAL,
+                           (SELECT ABS(i.MONTO_OPERACION) FROM transacciones i
+                            WHERE i.ORIGEN = 'INTERNACIONAL'
+                              AND UPPER(i.DESCRIPCION) LIKE '%%TRASPASO%%'
+                              AND i.TARJETA_ULT4 = n.TARJETA_ULT4
+                              AND i.FECHA_OPERACION_D = n.FECHA_OPERACION_D
+                              AND ABS(i.MONTO_OPERACION) > 0
+                            LIMIT 1)
+                    FROM transacciones n WHERE n.id = %s
+                    """,
                     (int(match_rid),),
                 )
                 clp_row = cur.fetchone()
                 if clp_row and clp_row[0]:
+                    divisor = clp_row[1] or (abs(row[1]) if row and row[1] else None)
                     try:
-                        tasa = abs(clp_row[0]) / abs(row[1])
+                        if divisor:
+                            tasa = abs(clp_row[0]) / divisor
                     except (ZeroDivisionError, ArithmeticError):
                         tasa = None
 
@@ -671,7 +687,66 @@ def fetch_traspaso_suggestions(conn) -> Tuple[Dict[int, Dict[str, Any]], set]:
             }
         elif len(cands) > 1:
             ambiguous.add(int(est["id"]))
+
+    for est_id, s in _traspaso_por_fecha(conn).items():
+        suggestions.setdefault(est_id, s)
     return suggestions, ambiguous
+
+
+def _traspaso_por_fecha(conn) -> Dict[int, Dict[str, Any]]:
+    """Pair the two sides of one transfer on card and date.
+
+    Matching a statement's DEUDA TOTAL against the credit misses every month
+    with an ABONO, because the bank then moves less than the full balance. The
+    credit line and the national line are the same event, so pairing those two
+    and taking the rate from them holds whether or not a payment was made —
+    and gives an identical rate on every statement the amount match already
+    resolves.
+    """
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            """
+            SELECT e.id AS est_id, n.id AS rid, n.ARCHIVO_ORIGEN AS archivo,
+                   n.MONTO_TOTAL AS clp, ABS(i.MONTO_OPERACION) AS usd
+            FROM transacciones i
+            JOIN transacciones n
+              ON n.ORIGEN = 'NACIONAL'
+             AND UPPER(n.DESCRIPCION) LIKE '%TRASPASO DEUDA INTERNAC%'
+             AND n.TARJETA_ULT4 = i.TARJETA_ULT4
+             AND n.FECHA_OPERACION_D = i.FECHA_OPERACION_D
+            JOIN LATERAL (
+                SELECT ec.id, ec.TRASPASO_ESTADO
+                FROM estados_cuenta ec
+                WHERE ec.ORIGEN = 'INTERNACIONAL'
+                  AND ec.TARJETA_ULT4 = i.TARJETA_ULT4
+                  AND ec.FECHA_ESTADO_D < i.FECHA_OPERACION_D
+                ORDER BY ec.FECHA_ESTADO_D DESC
+                LIMIT 1
+            ) e ON e.TRASPASO_ESTADO <> 'TRASPASADO'
+            WHERE i.ORIGEN = 'INTERNACIONAL'
+              AND UPPER(i.DESCRIPCION) LIKE '%TRASPASO%'
+              AND ABS(i.MONTO_OPERACION) > 0
+              AND n.MONTO_TOTAL IS NOT NULL
+              AND NOT EXISTS (
+                  SELECT 1 FROM estados_cuenta ec2 WHERE ec2.MATCH_RID = n.id
+              )
+            """
+        )
+        out: Dict[int, Dict[str, Any]] = {}
+        vistos_rid: set = set()
+        for r in cur.fetchall():
+            # One national line can only settle one statement.
+            if r["rid"] in vistos_rid or int(r["est_id"]) in out:
+                continue
+            vistos_rid.add(r["rid"])
+            out[int(r["est_id"])] = {
+                "rid": int(r["rid"]),
+                "archivo": r["archivo"],
+                "clp": r["clp"],
+                "tasa": abs(r["clp"]) / r["usd"],
+                "usd": r["usd"],
+            }
+        return out
 
 
 def auto_match_traspasos(conn) -> int:
