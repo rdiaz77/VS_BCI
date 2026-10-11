@@ -4,9 +4,13 @@ Uses Streamlit's own AppTest harness, so this catches the whole class of bugs
 that only appear at render time — bad column names, Decimal vs float, widget
 config mismatches — without a browser.
 
-Requires a reachable database (it reads the configured one); skips otherwise.
+Runs against the scratch database named by VS_BCI_TEST_DB_URL and skips when
+it is unset — never against the configured one, since rendering the
+Internacional page auto-matches traspasos and commits. See tests/conftest.py.
 """
 import pytest
+
+from tests.conftest import SIN_BASE, TEST_DB_ENV, test_db_url
 
 st_testing = pytest.importorskip("streamlit.testing.v1")
 AppTest = st_testing.AppTest
@@ -20,31 +24,30 @@ PAGES = [
 ]
 
 
-def _db_reachable() -> bool:
+def _motivo_para_saltar() -> str | None:
+    """None when the scratch database is usable, else why it is not."""
+    url = test_db_url()
+    if not url:
+        return SIN_BASE
     try:
-        import re
-        from pathlib import Path
-
         from data.database import init_db
 
-        p = Path(".streamlit/secrets.toml")
-        if not p.exists():
-            return False
-        m = re.search(r'supabase_db_url\s*=\s*"(.+?)"', p.read_text())
-        if not m:
-            return False
-        init_db(m.group(1)).close()
-        return True
-    except Exception:
-        return False
+        init_db(url).close()
+        return None
+    except Exception as e:
+        return f"{TEST_DB_ENV} está configurada pero no responde: {type(e).__name__}"
 
 
-pytestmark = pytest.mark.skipif(not _db_reachable(), reason="no database configured")
+_MOTIVO = _motivo_para_saltar()
+pytestmark = pytest.mark.skipif(_MOTIVO is not None, reason=_MOTIVO or "")
 
 
 def _run(page: str):
     at = AppTest.from_file("app.py", default_timeout=90)
     at.session_state["authenticated"] = True  # bypass the password gate
+    # Overrides the real secret, so the app under test cannot open the
+    # configured database even though app.py reads st.secrets for it.
+    at.secrets["supabase_db_url"] = test_db_url()
     at.run()
     if page != PAGES[0]:
         at.sidebar.radio[0].set_value(page).run()

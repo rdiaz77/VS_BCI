@@ -80,6 +80,17 @@ pytest tests/ -q
 `~/Desktop/Bci`, or in `$BCI_PDF_DIR`. Statements are gitignored, so those
 tests skip on a fresh clone.
 
+`tests/test_app_smoke.py` renders every page, and rendering is not read-only —
+the Internacional page auto-matches traspasos and commits. So it runs only
+against the scratch database named by `$VS_BCI_TEST_DB_URL` and skips when that
+is unset; it never reads `.streamlit/secrets.toml`. To run it, point the
+variable at an empty database (the schema is created on connect):
+
+```bash
+createdb vs_bci_test
+VS_BCI_TEST_DB_URL=postgresql:///vs_bci_test pytest tests/ -q
+```
+
 ## Streamlit Cloud deployment
 
 1. Push this repo to GitHub.
