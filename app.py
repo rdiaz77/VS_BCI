@@ -295,18 +295,29 @@ def render_transactions_page(conn, origen: str) -> None:
     # ---- International: reconcile the statement balance to a CLP line ----
     if is_intl:
         pend_est = fetch_estados_intl_pendientes(conn)
-        if pend_est:
-            # Only worth querying when something is actually pending.
-            auto_n = auto_match_traspasos(conn)
-            if auto_n:
-                st.toast(f"{auto_n} traspaso(s) emparejado(s) automáticamente.")
-                pend_est = fetch_estados_intl_pendientes(conn)
 
         if pend_est:
             disponibles = fetch_traspaso_nacional_disponibles(conn)
+            # Read-only: computing the suggestions changes nothing, so it is
+            # safe on every render. Applying them is behind the button below —
+            # opening a page must not rewrite reconciliation state.
             suggestions, _amb = fetch_traspaso_suggestions(conn)
             st.divider()
             st.subheader("💱 Asignar Costo en CLP (traspaso)")
+
+            if suggestions:
+                st.caption(
+                    f"{len(suggestions)} de {len(pend_est)} cartolas pendientes "
+                    "tienen un traspaso nacional identificable."
+                )
+                if st.button(
+                    f"🔗 Emparejar {len(suggestions)} traspaso(s) sugerido(s)",
+                    type="primary",
+                ):
+                    n = auto_match_traspasos(conn)
+                    st.success(f"{n} traspaso(s) emparejado(s).")
+                    st.rerun()
+
             if not disponibles:
                 st.info(
                     "No hay líneas **TRASPASO DEUDA INTERNACIONAL** nacionales sin "
